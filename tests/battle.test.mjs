@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { briarling, court, loadout, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
+import { archerVolley, boarCharge, court, foes, loadout, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
+const briarling = foes.briarling
 const { view } = court
-import { Battle, DURATION, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
+import { Battle, bursts, DURATION, makeFoe, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
 
 function playing(random = () => 0) {
   const battle = new Battle(random)
@@ -147,12 +148,12 @@ test('late waves spawn more foes over an equal interval', () => {
     advance(b, 240)
     return b.kills + b.foes.length
   }
-  assert.ok(count(50) > count(0))
+  assert.ok(count(250) > count(10))
 })
 
 test('witchfire hits the nearest in-range target once and respects its cooldown', () => {
   const b = playing()
-  const foe = offset => ({ x: b.player.x + offset, y: b.player.y, speed: 0, health: 1 })
+  const foe = offset => makeFoe('briarling', b.player.x + offset, b.player.y, 0, 1)
   const near = foe(35), far = foe(120), outside = foe(160)
   b.spells.witchfire.cooldown = 0.55
   b.foes = [outside, far, near]
@@ -174,7 +175,7 @@ test('witchfire hits the nearest in-range target once and respects its cooldown'
 
 test('overlapping foes share a damage cooldown and can eventually destroy armor', () => {
   const b = playing()
-  b.foes = Array.from({ length: 20 }, () => ({ ...b.player, speed: 0, health: 1e9 }))
+  b.foes = Array.from({ length: 20 }, () => makeFoe('briarling', b.player.x, b.player.y, 0, 1e9))
   advance(b, 1)
   assert.equal(b.armor, MAX_ARMOR - 1)
   advance(b, 70)
@@ -277,7 +278,7 @@ function learn(b, spell) {
 
 // A foe that stands still and never dies, placed relative to the warden.
 function dummy(b, dx, dy = 0) {
-  const foe = { x: b.player.x + dx, y: b.player.y + dy, speed: 0, health: 1e9 }
+  const foe = makeFoe('briarling', b.player.x + dx, b.player.y + dy, 0, 1e9)
   b.foes.push(foe)
   return foe
 }
@@ -287,7 +288,7 @@ const hurt = foe => 1e9 - foe.health
 test('a level-up freezes foes, the clock and the cooldowns until a card is chosen', () => {
   const b = playing()
   advance(b, 30)
-  b.foes.push({ x: b.player.x + 300, y: b.player.y, speed: 60, health: 3 })
+  b.foes.push(makeFoe('briarling', b.player.x + 300, b.player.y, 60, 3))
   b.timers.witchfire = 0.1
   levelUp(b)
   assert.equal(b.phase, 'choosing')
@@ -459,7 +460,7 @@ test('each spell keeps its own cooldown and area spells leave embers too', () =>
   learn(b, 'moonblade')
   learn(b, 'toll')
   dummy(b, 60)
-  b.foes.push({ x: b.player.x + 30, y: b.player.y, speed: 0, health: 0.1 })
+  b.foes.push(makeFoe('briarling', b.player.x + 30, b.player.y, 0, 0.1))
   const counts = { shot: 0, slash: 0, toll: 0, kill: 0 }
   const seconds = 4
   for (let i = 0; i < seconds * 60; i++) {
@@ -475,4 +476,276 @@ test('each spell keeps its own cooldown and area spells leave embers too', () =>
   assert.equal(b.kills, 1)
   // The ember fell within reach and was collected on the next step.
   assert.equal(b.embers.length + b.xp, 1)
+})
+
+// --- Step 2.5: the wave schedule, boars, archers and lamp oil.
+
+function seeded(seed = 11) {
+  return () => (seed = (seed * 16807) % 2147483647) / 2147483647
+}
+
+// Jumps a quiet, unkillable run to just before the given second.
+function runAt(second, random = seeded()) {
+  const b = new Battle(random)
+  b.phase = 'playing'
+  b.spells.witchfire.range = 0
+  b.armor = Infinity
+  b.elapsed = second - 0.05
+  b.step(0, 0, 0)
+  b.foes = []
+  return b
+}
+
+test('a wave sends its group once at its start and then on its own beat until it ends', () => {
+  const once = { kind: 'briarling', from: 240, count: 8 }
+  assert.deepEqual([0, 239.9, 240, 241, 300].map(t => bursts(once, t)), [0, 0, 1, 1, 1])
+  const beat = { kind: 'boar', from: 60, to: 90, every: 10, count: 1 }
+  assert.deepEqual([59.9, 60, 69.9, 70, 80, 89.9, 90, 200].map(t => bursts(beat, t)), [0, 1, 1, 2, 3, 3, 3, 3])
+  const uneven = { kind: 'archer', from: 0, to: 25, every: 10, count: 2 }
+  assert.deepEqual([0, 10, 20, 24.9, 25, 30].map(t => bursts(uneven, t)), [1, 2, 3, 3, 3, 3])
+})
+
+test('at a wave boundary survivors stay and each new group enters exactly once', () => {
+  const b = runAt(240)
+  const survivor = makeFoe('boar', b.player.x + 900, b.player.y, 0, 1e9)
+  b.foes.push(survivor)
+  advance(b, 2)
+  assert.deepEqual(b.foes, [survivor])
+  while (b.foes.length === 1) b.step(1 / 60, 0, 0)
+  assert.ok(b.elapsed >= 240 && b.elapsed < 240.02)
+  const starting = waves.filter(wave => wave.from === 240)
+  const expected = starting.reduce((sum, wave) => sum + wave.count, 0)
+  assert.ok(starting.some(wave => wave.count > 1))
+  assert.equal(b.foes.length, 1 + expected)
+  assert.ok(b.foes.includes(survivor))
+  // The pack enters side by side along one edge of the view.
+  const pack = b.foes.slice(1, 9)
+  const spread = axis => Math.max(...pack.map(foe => foe[axis])) - Math.min(...pack.map(foe => foe[axis]))
+  assert.ok(Math.min(spread('x'), spread('y')) < 20)
+  assert.ok(Math.abs(Math.max(spread('x'), spread('y')) - 7 * 34) < 20)
+  advance(b, 12)
+  assert.equal(b.foes.length, 1 + expected)
+})
+
+test('a whole run sends in exactly the groups the schedule lists', () => {
+  const b = new Battle(seeded())
+  b.phase = 'playing'
+  b.spells.witchfire.range = 0
+  b.armor = Infinity
+  const seen = new Set()
+  const entered = { briarling: 0, boar: 0, archer: 0 }
+  while (b.phase === 'playing') {
+    b.step(1 / 30, 0, 0)
+    for (const foe of b.foes) {
+      if (seen.has(foe)) continue
+      seen.add(foe)
+      entered[foe.kind]++
+    }
+    // Keep the court from filling up: foes that have been counted may go.
+    if (b.foes.length > 40) b.foes = []
+    b.arrows = []
+  }
+  assert.equal(b.phase, 'won')
+  assert.equal(DURATION, run.duration)
+  for (const kind of Object.keys(entered)) {
+    const listed = waves
+      .filter(wave => wave.kind === kind)
+      .reduce((sum, wave) => sum + bursts(wave, run.duration) * wave.count, 0)
+    assert.equal(entered[kind], listed, kind)
+    assert.ok(listed > 0)
+  }
+  const first = kind => Math.min(...waves.filter(wave => wave.kind === kind).map(wave => wave.from))
+  assert.ok(first('briarling') < first('boar') && first('boar') < first('archer'))
+})
+
+test('after a pause the schedule continues from the same second', () => {
+  const play = pauseAt => {
+    const b = new Battle(seeded(5))
+    b.phase = 'playing'
+    b.spells.witchfire.range = 0
+    b.armor = Infinity
+    b.elapsed = 58
+    for (let frame = 0; frame < 300; frame++) {
+      if (frame === pauseAt) {
+        b.phase = 'paused'
+        advance(b, 500, 1, 1)
+        b.phase = 'playing'
+      }
+      b.step(1 / 60, 0, 0)
+    }
+    return JSON.stringify(b)
+  }
+  const straight = play(-1)
+  assert.equal(play(100), straight)
+  assert.equal(play(121), straight)
+  assert.ok(JSON.parse(straight).foes.some(foe => foe.kind === 'boar'))
+})
+
+// A lone foe of the given kind beside a warden who cannot kill it.
+function duel(kind, dx, dy = 0) {
+  const b = runAt(1)
+  b.armor = MAX_ARMOR
+  const foe = makeFoe(kind, b.player.x + dx, b.player.y + dy, foes[kind].speed, 1e9)
+  b.foes = [foe]
+  // Hold the schedule still so nothing else walks in.
+  const step = (frames, mx = 0, my = 0) => {
+    for (let i = 0; i < frames; i++) {
+      b.elapsed = 1
+      b.step(1 / 60, mx, my)
+      b.foes = [foe]
+    }
+  }
+  return { b, foe, step }
+}
+
+test('a boar warns before it charges down the lane it marked', () => {
+  const { b, foe, step } = duel('boar', boarCharge.trigger + 60)
+  step(30)
+  assert.equal(foe.mode, 'chase')
+  assert.ok(foe.x < b.player.x + boarCharge.trigger + 60)
+  while (foe.mode === 'chase') step(1)
+  assert.equal(foe.mode, 'windup')
+  assert.ok(b.player.x + boarCharge.trigger - foe.x < 3)
+  assert.deepEqual(foe.dir, { x: -1, y: 0 })
+  const from = { x: foe.x, y: foe.y }
+
+  // The boar stands still for the whole warning while the warden steps aside.
+  const warning = Math.round(boarCharge.windup * 60)
+  step(warning - 8, 0, 1)
+  assert.equal(foe.mode, 'windup')
+  assert.deepEqual({ x: foe.x, y: foe.y }, from)
+  assert.ok(b.player.y > from.y + 100)
+
+  // The charge keeps the marked direction instead of following the warden.
+  step(12, 0, 1)
+  assert.equal(foe.mode, 'charge')
+  assert.deepEqual(foe.dir, { x: -1, y: 0 })
+  step(Math.round((boarCharge.length / boarCharge.speed) * 60) + 4)
+  assert.equal(foe.mode, 'rest')
+  assert.equal(foe.y, from.y)
+  assert.ok(Math.abs(from.x - foe.x - boarCharge.length) < 20)
+  assert.equal(b.armor, MAX_ARMOR)
+  const rested = { x: foe.x, y: foe.y }
+  step(Math.round(boarCharge.rest * 60) - 10)
+  assert.deepEqual({ x: foe.x, y: foe.y }, rested)
+  step(30)
+  assert.notEqual(foe.mode, 'rest')
+})
+
+test('a warden who stays in the lane is run down once', () => {
+  const { b, foe, step } = duel('boar', boarCharge.trigger - 10)
+  step(Math.round(boarCharge.windup * 60) - 4)
+  assert.equal(foe.mode, 'windup')
+  assert.equal(b.armor, MAX_ARMOR)
+  step(60)
+  assert.equal(b.armor, MAX_ARMOR - 1)
+})
+
+test('an archer stops at range, warns, then looses a volley along the aimed line', () => {
+  const { b, foe, step } = duel('archer', archerVolley.range + 80)
+  step(30)
+  assert.equal(foe.mode, 'chase')
+  while (foe.mode === 'chase') step(1)
+  assert.equal(foe.mode, 'aim')
+  assert.deepEqual(foe.dir, { x: -1, y: 0 })
+  const stand = { x: foe.x, y: foe.y }
+  assert.ok(stand.x - b.player.x > archerVolley.range - 10)
+
+  // No arrow flies during the warning; the warden leaves the line meanwhile.
+  step(Math.round(archerVolley.windup * 60) - 8, 0, -1)
+  assert.equal(foe.mode, 'aim')
+  assert.deepEqual(b.arrows, [])
+  const seen = []
+  const watch = frames => {
+    for (let i = 0; i < frames; i++) {
+      b.elapsed = 1
+      seen.push(...b.step(1 / 60, 0, 0).filter(event => event.type === 'arrow'))
+      b.foes = [foe]
+    }
+  }
+  watch(Math.round(archerVolley.interval * archerVolley.arrows * 60) + 12)
+  assert.equal(seen.length, archerVolley.arrows)
+  for (const arrow of seen) assert.deepEqual(arrow.at, stand)
+  for (const arrow of b.arrows) {
+    assert.equal(arrow.y, stand.y)
+    assert.equal(arrow.vy, 0)
+    assert.equal(arrow.vx, -archerVolley.arrowSpeed)
+  }
+  // The arrows pass the place the warden left and die out at the end of their reach.
+  watch(Math.round((archerVolley.arrowReach / archerVolley.arrowSpeed) * 60) + 4)
+  assert.deepEqual(b.arrows, [])
+  assert.equal(b.armor, MAX_ARMOR)
+
+  // The archer reloads before aiming again, and follows a warden who walks away.
+  assert.equal(foe.mode, 'chase')
+  watch(30)
+  assert.equal(seen.length, archerVolley.arrows)
+  watch(Math.round(archerVolley.reload * 60))
+  assert.ok(['aim', 'volley'].includes(foe.mode) || seen.length > archerVolley.arrows)
+  const { step: away } = { step }
+  foe.mode = 'chase'
+  foe.timer = 0
+  b.player.x -= 300
+  const before = foe.x
+  away(10)
+  assert.ok(foe.x < before)
+})
+
+test('a warden who stays on the aimed line is struck by the volley once', () => {
+  const { b, foe, step } = duel('archer', archerVolley.range - 20)
+  step(Math.round(archerVolley.windup * 60))
+  assert.equal(b.armor, MAX_ARMOR)
+  assert.deepEqual(b.arrows, [])
+  step(150)
+  assert.equal(b.armor, MAX_ARMOR - 1)
+  assert.equal(foe.shots, 0)
+})
+
+test('tougher foes leave richer embers', () => {
+  for (const kind of ['boar', 'archer']) {
+    const b = playing(() => 0.5)
+    b.foes = [makeFoe(kind, b.player.x + 60, b.player.y, 0, 0.1)]
+    const events = b.step(0, 0, 0)
+    assert.deepEqual(events.map(event => event.type), ['shot', 'kill'])
+    assert.equal(b.embers[0].value, foes[kind].ember)
+    assert.ok(foes[kind].ember > foes.briarling.ember)
+    assert.ok(foes[kind].health > foes.briarling.health)
+  }
+})
+
+test('lamp oil mends one pip, never past the maximum, and waits while the armor is whole', () => {
+  const kill = random => {
+    const b = playing(random)
+    b.foes = [makeFoe('briarling', b.player.x + 100, b.player.y, 0, 0.1)]
+    b.step(0, 0, 0)
+    return b
+  }
+  assert.ok(oil.chance > 0 && oil.chance < 0.2)
+  assert.deepEqual(kill(() => 0.9).oils, [])
+  const b = kill(() => 0)
+  const drop = { x: b.player.x + 100, y: b.player.y }
+  assert.deepEqual(b.oils, [drop])
+
+  // Whole armor: the warden walks over the oil and it stays.
+  b.spells.witchfire.range = 0
+  b.embers = []
+  b.foes = []
+  b.player = { ...drop }
+  b.step(0, 0, 0)
+  assert.deepEqual(b.oils, [drop])
+  assert.equal(b.armor, MAX_ARMOR)
+
+  b.armor = MAX_ARMOR - 1
+  b.oils.push({ ...drop })
+  const events = b.step(0, 0, 0)
+  assert.deepEqual(events.filter(event => event.type === 'heal'), [{ type: 'heal', at: drop }])
+  assert.equal(b.armor, MAX_ARMOR)
+  assert.equal(b.oils.length, 1)
+
+  b.armor = 1
+  b.oils.push({ x: drop.x + PICKUP_RADIUS + 30, y: drop.y })
+  b.foes = []
+  b.step(0, 0, 0)
+  assert.equal(b.armor, 2)
+  assert.equal(b.oils.length, 1)
 })

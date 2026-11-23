@@ -329,6 +329,25 @@ footer span {
   background: #ff865e;
   transform: rotate(45deg);
 }
+.boar-dot {
+  width: 11px;
+  height: 11px;
+  background: #77524a;
+  border: 1px solid #f0e2c4;
+}
+.archer-dot {
+  width: 9px;
+  height: 9px;
+  background: #c4bfd2;
+  transform: rotate(45deg);
+}
+.oil-dot {
+  width: 7px;
+  height: 9px;
+  border-radius: 2px 2px 4px 4px;
+  background: #a9efd9;
+  box-shadow: 0 0 6px #3f8f86;
+}
 .ember-dot {
   width: 7px;
   height: 7px;

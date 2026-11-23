@@ -16,6 +16,9 @@ const en = {
   pause: 'Pause',
   warden: 'Dawn Warden',
   briarling: 'Briarling',
+  boar: 'Thorn Boar',
+  archer: 'Court Archer',
+  oil: 'Lamp oil',
   ember: 'Ember',
   slots: 'Spells',
   emptySlot: 'Empty slot',
@@ -27,7 +30,7 @@ const en = {
   },
   ready: {
     label: 'THE FIRST VIGIL', title: 'Until first light',
-    message: 'Hold the chapel court for 60 seconds until dawn. Keep clear of the briarlings. Your lantern casts witchfire at the nearest foe, and the embers left behind raise your level and teach new spells.',
+    message: 'Hold the chapel court for five minutes until dawn. Your lantern casts witchfire by itself. Gather embers to learn spells, and step out of the lanes that boars and archers mark before they strike.',
     action: 'Start run',
   },
   paused: {
@@ -59,7 +62,7 @@ const en = {
   armorValue: (value: number, max: number) => `Armor ${value} of ${max}`,
   xpValue: (value: number, goal: number) => `Experience ${value} of ${goal}`,
   result: (time: string, kills: number, level: number) =>
-    `Time survived: ${time}. Briarlings banished: ${kills}. Level reached: ${level}.`,
+    `Time survived: ${time}. Foes banished: ${kills}. Level reached: ${level}.`,
 }
 
 const ru: typeof en = {
@@ -78,6 +81,9 @@ const ru: typeof en = {
   pause: 'Пауза',
   warden: 'Дозорная',
   briarling: 'Корневик',
+  boar: 'Терновый вепрь',
+  archer: 'Придворный лучник',
+  oil: 'Лампадное масло',
   ember: 'Уголёк',
   slots: 'Заклинания',
   emptySlot: 'Пустая ячейка',
@@ -89,7 +95,7 @@ const ru: typeof en = {
   },
   ready: {
     label: 'ПЕРВЫЙ ДОЗОР', title: 'До первых лучей',
-    message: 'Продержись 60 секунд до рассвета. Уходи от корневиков. Фонарь сам выпускает ведьмин огонь в ближайшего врага, а угольки на земле повышают уровень и открывают новые заклинания.',
+    message: 'Продержись пять минут до рассвета. Фонарь сам выпускает ведьмин огонь. Собирай угольки, чтобы изучать заклинания, и уходи с полос, которые вепри и лучники отмечают перед ударом.',
     action: 'Начать забег',
   },
   paused: {
@@ -121,7 +127,7 @@ const ru: typeof en = {
   armorValue: (value, max) => `Броня ${value} из ${max}`,
   xpValue: (value, goal) => `Опыт ${value} из ${goal}`,
   result: (time, kills, level) =>
-    `Время в бою — ${time}. Изгнано корневиков — ${kills}. Достигнут уровень — ${level}.`,
+    `Время в бою — ${time}. Изгнано врагов — ${kills}. Достигнут уровень — ${level}.`,
 }
 
 export const messages = { en, ru }

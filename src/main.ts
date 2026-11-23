@@ -1,8 +1,10 @@
 import Phaser from 'phaser'
-import { Battle, DURATION, MAX_ARMOR, xpGoal } from './battle'
+import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Phase, Shot } from './battle'
-import { court, loadout } from './content'
-import { briarlingTexture, emberTexture, floorTexture, wardenTexture } from './art'
+import { archerVolley, boarCharge, court, loadout } from './content'
+import {
+  archerTexture, boarTexture, briarlingTexture, emberTexture, floorTexture, oilTexture, wardenTexture,
+} from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
 import './style.css'
@@ -80,6 +82,8 @@ class Arena extends Phaser.Scene {
   private warden!: Phaser.GameObjects.Image
   private foes: Phaser.GameObjects.Image[] = []
   private embers: Phaser.GameObjects.Image[] = []
+  private oils: Phaser.GameObjects.Image[] = []
+  private warnings!: Phaser.GameObjects.Graphics
   private effects!: Phaser.GameObjects.Graphics
   private flash?: { shot: Shot; life: number }
   // Short-lived pictures of pickups, blade swings and bell strokes.
@@ -94,15 +98,21 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('warden', wardenTexture())
     this.textures.addCanvas('briarling', briarlingTexture())
     this.textures.addCanvas('ember', emberTexture())
+    this.textures.addCanvas('boar', boarTexture())
+    this.textures.addCanvas('archer', archerTexture())
+    this.textures.addCanvas('oil', oilTexture())
+    // The running scene, for browser tests and for poking at it from the console.
+    Object.assign(window, { arena: this })
     this.add.image(0, 0, 'floor').setOrigin(0)
     this.warden = this.add.image(0, 0, 'warden').setDepth(2)
     this.effects = this.add.graphics().setDepth(3)
+    this.warnings = this.add.graphics().setDepth(0.7)
     this.cameras.main.setBounds(0, 0, court.width, court.height)
     // Three still briarlings pose beside the warden on the title screen.
     const { x, y } = this.battle.player
-    this.battle.foes = [[131, -106], [190, -56], [88, 104]].map(([dx, dy]) => ({
-      x: x + dx, y: y + dy, speed: 0, health: 1,
-    }))
+    this.battle.foes = [[131, -106], [190, -56], [88, 104]].map(([dx, dy]) =>
+      makeFoe('briarling', x + dx, y + dy, 0, 1),
+    )
 
     const selectLanguage = (next: Language) => {
       language = next
@@ -185,7 +195,7 @@ class Arena extends Phaser.Scene {
       for (const effect of this.pictures) effect.life -= dt
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
-        const span = { pickup: 0.25, slash: 0.16, toll: 0.32 }[event.type as string]
+        const span = { pickup: 0.25, heal: 0.45, slash: 0.16, toll: 0.32 }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
       remaining -= dt
@@ -205,13 +215,53 @@ class Arena extends Phaser.Scene {
     while (this.foes.length < b.foes.length) {
       this.foes.push(this.add.image(0, 0, 'briarling').setDepth(1))
     }
+    // Marked lanes: where a boar is about to run and where an archer aims.
+    const w = this.warnings.clear()
     this.foes.forEach((image, index) => {
       const foe = b.foes[index]
       image.setVisible(!!foe)
-      if (foe)
-        image
-          .setPosition(foe.x, foe.y)
-          .setRotation(Math.atan2(b.player.y - foe.y, b.player.x - foe.x))
+      if (!foe) return
+      if (image.texture.key !== foe.kind) image.setTexture(foe.kind)
+      const locked = foe.mode !== 'chase' && foe.mode !== 'rest'
+      const pawing = foe.mode === 'windup' ? Math.sin(b.elapsed * 70) * 2 : 0
+      image
+        .setPosition(foe.x + pawing, foe.y)
+        .setRotation(
+          locked
+            ? Math.atan2(foe.dir.y, foe.dir.x)
+            : Math.atan2(b.player.y - foe.y, b.player.x - foe.x),
+        )
+      if (foe.mode === 'windup') {
+        const progress = 1 - foe.timer / boarCharge.windup
+        const { x, y } = foe.dir
+        const side = boarCharge.width / 2
+        const far = { x: foe.x + x * boarCharge.length, y: foe.y + y * boarCharge.length }
+        w.fillStyle(0xff5a3c, 0.1 + 0.22 * progress)
+        w.beginPath()
+        w.moveTo(foe.x - y * side, foe.y + x * side)
+        w.lineTo(far.x - y * side, far.y + x * side)
+        w.lineTo(far.x + y * side, far.y - x * side)
+        w.lineTo(foe.x + y * side, foe.y - x * side)
+        w.closePath()
+        w.fillPath()
+      } else if (foe.mode === 'aim' || foe.mode === 'volley') {
+        const progress = foe.mode === 'aim' ? 1 - foe.timer / archerVolley.windup : 1
+        w.lineStyle(2 + 2 * progress, 0xffe08a, 0.2 + 0.5 * progress)
+        w.lineBetween(
+          foe.x,
+          foe.y,
+          foe.x + foe.dir.x * archerVolley.arrowReach,
+          foe.y + foe.dir.y * archerVolley.arrowReach,
+        )
+      }
+    })
+    while (this.oils.length < b.oils.length) {
+      this.oils.push(this.add.image(0, 0, 'oil').setDepth(0.5))
+    }
+    this.oils.forEach((image, index) => {
+      const drop = b.oils[index]
+      image.setVisible(!!drop)
+      if (drop) image.setPosition(drop.x, drop.y)
     })
     while (this.embers.length < b.embers.length) {
       this.embers.push(this.add.image(0, 0, 'ember').setDepth(0.5))
@@ -225,11 +275,18 @@ class Arena extends Phaser.Scene {
           .setScale(1 + 0.12 * Math.sin(b.elapsed * 6 + ember.x))
     })
     const g = this.effects.clear()
+    g.lineStyle(2, 0xf3ead2, 1)
+    for (const arrow of b.arrows) {
+      g.lineBetween(arrow.x - arrow.vx * 0.05, arrow.y - arrow.vy * 0.05, arrow.x, arrow.y)
+    }
     for (const { event, life, span } of this.pictures) {
       const fade = life / span
       if (event.type === 'pickup') {
         g.lineStyle(1.5, 0xffc46b, fade)
         g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 14)
+      } else if (event.type === 'heal') {
+        g.lineStyle(2.5, 0xa9efd9, fade)
+        g.strokeCircle(b.player.x, b.player.y, 20 + (1 - fade) * 18)
       } else if (event.type === 'slash') {
         const { at, facing, range, arc } = event
         g.fillStyle(0xcfd8ff, 0.4 * fade)

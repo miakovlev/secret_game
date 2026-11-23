@@ -1,14 +1,28 @@
 import {
-  briarling, court, leveling, loadout, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades,
+  archerVolley, boarCharge, court, foes, leveling, loadout, oil, run, shownValue, spellIds, spells,
+  upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
-import type { SpellId, Stats, UpgradeId } from './content.ts'
+import type { FoeKind, SpellId, Stats, UpgradeId, Wave } from './content.ts'
 
 // Positions and speeds are expressed in arena pixels and seconds.
-export const DURATION = 60
+export const DURATION = run.duration
 export const MAX_ARMOR = 5
 export const PICKUP_RADIUS = 48
 export type Point = { x: number; y: number }
-export type Foe = Point & { speed: number; health: number }
+// A foe chases the warden by default. A boar goes chase → windup → charge →
+// rest; an archer goes chase → aim → volley. `timer` counts down the current
+// mode (or an archer's reload), `dir` is the locked direction of a charge or volley.
+export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley'
+export type Foe = Point & {
+  kind: FoeKind
+  speed: number
+  health: number
+  mode: FoeMode
+  timer: number
+  dir: Point
+  shots: number
+}
+export type Arrow = Point & { vx: number; vy: number; life: number }
 export type Ember = Point & { value: number }
 export type Shot = { from: Point; to: Point }
 // Everything that happened during one step, in order, for the scene to show.
@@ -18,6 +32,8 @@ export type BattleEvent =
   | { type: 'toll'; at: Point; radius: number }
   | { type: 'kill'; at: Point }
   | { type: 'pickup'; at: Point }
+  | { type: 'heal'; at: Point }
+  | { type: 'arrow'; at: Point }
   | { type: 'level'; level: number }
 export type Phase = 'ready' | 'playing' | 'paused' | 'choosing' | 'won' | 'lost'
 // One level-up card: a new spell, or the shown value of a stat before and after.
@@ -30,12 +46,26 @@ export function xpGoal(level: number) {
   return leveling.first + (level - 1) * leveling.growth
 }
 
+export function makeFoe(kind: FoeKind, x: number, y: number, speed: number, health: number): Foe {
+  return { kind, x, y, speed, health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0 }
+}
+
+// How many times the wave's group has been due by the given second of the run.
+export function bursts(wave: Wave, elapsed: number) {
+  if (elapsed < wave.from) return 0
+  if (!wave.every || wave.to === undefined) return 1
+  const last = Math.ceil((wave.to - wave.from) / wave.every) - 1
+  return Math.min(Math.floor((elapsed - wave.from) / wave.every), last) + 1
+}
+
 export class Battle {
   phase: Phase = 'ready'
   player: Point = { x: court.width / 2, y: court.height / 2 }
   facing = 0
   foes: Foe[] = []
   embers: Ember[] = []
+  oils: Point[] = []
+  arrows: Arrow[] = []
   xp = 0
   level = 1
   // Level-ups that still await a card, and the cards on offer for the first of them.
@@ -49,7 +79,8 @@ export class Battle {
   kills = 0
   elapsed = 0
   immunity = 0
-  private nextSpawn = 0
+  // How many groups each wave of the schedule has already sent in.
+  private fired = waves.map(() => 0)
 
   private readonly random: () => number
 
@@ -67,27 +98,95 @@ export class Battle {
     }
   }
 
-  // Foes step in just beyond an edge of the visible area, never inside it.
-  private spawn() {
+  // A group steps in side by side just beyond one edge of the visible area,
+  // never inside it.
+  private spawn(kind: FoeKind, count: number) {
     const edge = Math.floor(this.random() * 4)
     const pos = this.random()
     const { width, height } = court.view
     const view = this.camera()
-    const foe = {
-      x: view.x + (edge === 0 ? -14 : edge === 1 ? width + 14 : pos * width),
-      y: view.y + (edge === 2 ? -14 : edge === 3 ? height + 14 : pos * height),
-      speed:
-        briarling.speed +
-        this.random() * briarling.speedSpread +
-        this.elapsed * briarling.speedGrowth,
-      health: briarling.health + this.elapsed * briarling.healthGrowth,
+    const stats = foes[kind]
+    for (let i = 0; i < count; i++) {
+      const shift = (i - (count - 1) / 2) * 34
+      const foe = makeFoe(
+        kind,
+        view.x + (edge === 0 ? -14 : edge === 1 ? width + 14 : pos * width + shift),
+        view.y + (edge === 2 ? -14 : edge === 3 ? height + 14 : pos * height + shift),
+        stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
+        stats.health + this.elapsed * stats.healthGrowth,
+      )
+      // Leave room to react when the warden is patrolling an entry point.
+      if (Math.hypot(foe.x - this.player.x, foe.y - this.player.y) < 150) {
+        if (edge < 2) foe.x = 2 * view.x + width - foe.x
+        else foe.y = 2 * view.y + height - foe.y
+      }
+      this.foes.push(foe)
     }
-    // Leave room to react when the warden is patrolling an entry point.
-    if (Math.hypot(foe.x - this.player.x, foe.y - this.player.y) < 150) {
-      if (edge < 2) foe.x = 2 * view.x + width - foe.x
-      else foe.y = 2 * view.y + height - foe.y
+  }
+
+  // Thorns, tusks and arrows all take one pip, with a moment of mercy after.
+  private wound() {
+    if (this.immunity > 0) return
+    this.armor--
+    this.immunity = 1.25
+    if (this.armor === 0) this.phase = 'lost'
+  }
+
+  private boar(foe: Foe, dt: number, distance: number, toward: Point) {
+    if (foe.mode === 'chase') {
+      if (distance < boarCharge.trigger) {
+        foe.mode = 'windup'
+        foe.timer = boarCharge.windup
+        foe.dir = toward
+      } else {
+        foe.x += toward.x * dt * foe.speed
+        foe.y += toward.y * dt * foe.speed
+      }
+    } else if (foe.mode === 'windup') {
+      if (foe.timer > 0) return
+      foe.mode = 'charge'
+      foe.timer = boarCharge.length / boarCharge.speed
+    } else if (foe.mode === 'charge') {
+      foe.x += foe.dir.x * dt * boarCharge.speed
+      foe.y += foe.dir.y * dt * boarCharge.speed
+      if (foe.timer > 0) return
+      foe.mode = 'rest'
+      foe.timer = boarCharge.rest
+    } else if (foe.timer === 0) {
+      foe.mode = 'chase'
     }
-    this.foes.push(foe)
+  }
+
+  private archer(foe: Foe, dt: number, distance: number, toward: Point, events: BattleEvent[]) {
+    if (foe.mode === 'chase') {
+      if (distance >= archerVolley.range) {
+        foe.x += toward.x * dt * foe.speed
+        foe.y += toward.y * dt * foe.speed
+      } else if (foe.timer === 0) {
+        foe.mode = 'aim'
+        foe.timer = archerVolley.windup
+        foe.dir = toward
+      }
+    } else if (foe.mode === 'aim') {
+      if (foe.timer > 0) return
+      foe.mode = 'volley'
+      foe.shots = archerVolley.arrows
+    } else if (foe.timer === 0) {
+      this.arrows.push({
+        x: foe.x,
+        y: foe.y,
+        vx: foe.dir.x * archerVolley.arrowSpeed,
+        vy: foe.dir.y * archerVolley.arrowSpeed,
+        life: archerVolley.arrowReach / archerVolley.arrowSpeed,
+      })
+      events.push({ type: 'arrow', at: { x: foe.x, y: foe.y } })
+      foe.shots--
+      foe.timer = archerVolley.interval
+      if (foe.shots === 0) {
+        foe.mode = 'chase'
+        foe.timer = archerVolley.reload
+      }
+    }
   }
 
   private collect(events: BattleEvent[]) {
@@ -105,6 +204,14 @@ export class Battle {
         this.pending++
         events.push({ type: 'level', level: this.level })
       }
+      return false
+    })
+    // Lamp oil mends one pip and waits on the ground while the armor is whole.
+    this.oils = this.oils.filter(drop => {
+      const distance = Math.hypot(drop.x - this.player.x, drop.y - this.player.y)
+      if (distance > PICKUP_RADIUS || this.armor >= MAX_ARMOR) return true
+      this.armor++
+      events.push({ type: 'heal', at: drop })
       return false
     })
   }
@@ -202,7 +309,8 @@ export class Battle {
         const fallen = { x: foe.x, y: foe.y }
         this.foes.splice(this.foes.indexOf(foe), 1)
         this.kills++
-        this.embers.push({ ...fallen, value: briarling.ember })
+        this.embers.push({ ...fallen, value: foes[foe.kind].ember })
+        if (this.random() < oil.chance) this.oils.push(fallen)
         events.push({ type: 'kill', at: fallen })
       }
     }
@@ -237,38 +345,44 @@ export class Battle {
       return events
     }
 
-    this.nextSpawn -= dt
-    if (this.nextSpawn <= 0) {
-      this.spawn()
-      this.nextSpawn += Math.max(
-        briarling.gapFloor,
-        briarling.gap - this.elapsed * briarling.gapShrink,
-      )
-    }
+    // The schedule runs on the clock of the run, so a pause never shifts it
+    // and every group enters exactly once.
+    waves.forEach((wave, index) => {
+      const due = bursts(wave, this.elapsed)
+      if (this.fired[index] < due) {
+        this.spawn(wave.kind, wave.count)
+        this.fired[index] = due
+      }
+    })
 
     this.immunity = Math.max(0, this.immunity - dt)
     for (const foe of this.foes) {
       const vx = this.player.x - foe.x
       const vy = this.player.y - foe.y
       const distance = Math.hypot(vx, vy)
-      if (distance > 0) {
+      const toward = distance > 0 ? { x: vx / distance, y: vy / distance } : { x: 0, y: 0 }
+      foe.timer = Math.max(0, foe.timer - dt)
+      if (foe.kind === 'boar') {
+        this.boar(foe, dt, distance, toward)
+      } else if (foe.kind === 'archer') {
+        this.archer(foe, dt, distance, toward, events)
+      } else {
         const travel = Math.min(distance, dt * foe.speed)
-        foe.x += (vx / distance) * travel
-        foe.y += (vy / distance) * travel
+        foe.x += toward.x * travel
+        foe.y += toward.y * travel
       }
-      const remaining = Math.hypot(
-        this.player.x - foe.x,
-        this.player.y - foe.y,
-      )
-      if (remaining < 18 && this.immunity === 0) {
-        this.armor--
-        this.immunity = 1.25
-        if (this.armor === 0) {
-          this.phase = 'lost'
-          return events
-        }
-      }
+      const remaining = Math.hypot(this.player.x - foe.x, this.player.y - foe.y)
+      if (remaining < foes[foe.kind].reach) this.wound()
     }
+    this.arrows = this.arrows.filter(arrow => {
+      arrow.x += arrow.vx * dt
+      arrow.y += arrow.vy * dt
+      arrow.life -= dt
+      const struck = Math.hypot(arrow.x - this.player.x, arrow.y - this.player.y) < archerVolley.hit
+      if (struck) this.wound()
+      return !struck && arrow.life > 0
+    })
+    if ((this.phase as Phase) === 'lost') return events
 
     this.cast(dt, events)
     return events

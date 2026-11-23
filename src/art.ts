@@ -240,3 +240,59 @@ export function emberTexture() {
     polygon(p, [[13,10],[15,13],[13,16],[11,13]], '#fff0b8')
   })
 }
+
+// All foes are drawn facing right; the scene turns them.
+export function boarTexture() {
+  return texture(68, 68, p => {
+    p.translate(34, 34)
+    circle(p, -3, 3, 24, '#1d1a22')
+    // Bristling back of thorns, heavy shoulders, lowered head and tusks.
+    for (let i = -3; i <= 3; i++) {
+      polygon(p, [[-20+i*2,i*6-3],[-32,i*7],[-20+i*2,i*6+3]], '#3d2c33')
+    }
+    polygon(p, [[-22,-14],[-8,-20],[10,-16],[22,-6],[22,6],[10,16],[-8,20],[-22,14]], '#5b3f3a')
+    polygon(p, [[-14,-10],[-2,-14],[10,-10],[14,0],[10,10],[-2,14],[-14,10]], '#77524a')
+    polygon(p, [[12,-11],[26,-7],[31,0],[26,7],[12,11]], '#4a3231')
+    for (const side of [-1, 1]) {
+      polygon(p, [[24,side*6],[34,side*11],[27,side*10]], '#f0e2c4')
+      circle(p, 20, side*5, 2, '#ff6a4d')
+    }
+  })
+}
+
+export function archerTexture() {
+  return texture(48, 48, p => {
+    p.translate(24, 24)
+    circle(p, -2, 2, 14, '#1d1a22')
+    // Pale court coat, hood, and a drawn bow held forward.
+    polygon(p, [[-14,-9],[2,-10],[8,0],[2,10],[-14,9],[-9,0]], '#8f8aa3')
+    polygon(p, [[-10,-6],[1,-7],[5,0],[1,7],[-10,6]], '#c4bfd2')
+    circle(p, 2, 0, 5, '#3b3346')
+    p.strokeStyle = '#d9c08a'
+    p.lineWidth = 2
+    p.beginPath()
+    p.arc(4, 0, 15, -1.15, 1.15)
+    p.stroke()
+    p.strokeStyle = '#f3ead2'
+    p.lineWidth = 1
+    p.beginPath()
+    p.moveTo(10, -13.5)
+    p.lineTo(10, 13.5)
+    p.stroke()
+    box(p, 4, -1, 18, 2, '#f3ead2')
+  })
+}
+
+export function oilTexture() {
+  return texture(30, 30, p => {
+    const glow = p.createRadialGradient(15, 15, 1, 15, 15, 15)
+    glow.addColorStop(0, '#8ff0d099')
+    glow.addColorStop(1, '#8ff0d000')
+    p.fillStyle = glow
+    p.fillRect(0, 0, 30, 30)
+    // A small lamp-oil flask with a cork.
+    polygon(p, [[12,9],[18,9],[18,13],[22,18],[20,24],[10,24],[8,18],[12,13]], '#3f8f86')
+    polygon(p, [[13,15],[17,15],[19,19],[18,22],[12,22],[11,19]], '#a9efd9')
+    box(p, 12, 6, 6, 3, '#c9a977')
+  })
+}
