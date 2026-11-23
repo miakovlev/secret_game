@@ -1327,9 +1327,10 @@ test('the ring follows the hero and a faster ring stings more often', () => {
     b.armor = Infinity
     const foe = makeFoe('briarling', b.player.x + 200 + b.spells.fireflies.range, b.player.y, 0, 1e9)
     b.foes = [foe]
-    // Walk so that the foe ends up on the ring, then wait.
-    advance(b, 75, 1, 0)
+    // Walk so that the foe ends up on the ring, then wait. Well short of it nothing stings.
+    advance(b, 45, 1, 0)
     assert.equal(hurt(foe), 0)
+    advance(b, 30, 1, 0)
     for (let i = 0; i < 360; i++) {
       b.step(1 / 60, 0, 0)
       b.foes = [foe]
@@ -2001,13 +2002,15 @@ test('blessed fireflies light a second swarm across the ring', () => {
   assert.equal(b.swarmSize, fireflyRule.count)
   b.blessed.fireflies = true
   assert.equal(b.swarmSize, fireflyRule.count * blessings.fireflies.swarms)
-  // Four spirits a quarter turn apart: foes at east and north are both stung at once.
+  // Twice as many spirits, evenly spaced: a foe under the first and one under
+  // the next are both stung at once, and a foe halfway between them is not.
   const { range, damage } = spells.fireflies
-  const east = dummy(b, range)
-  const south = dummy(b, 0, range)
-  const between = dummy(b, range * Math.SQRT1_2, range * Math.SQRT1_2)
+  const gap = (2 * Math.PI) / b.swarmSize
+  const at = turn => dummy(b, Math.cos(turn) * range, Math.sin(turn) * range)
+  const first = at(0), next = at(gap), between = at(gap / 2)
+  assert.ok(2 * range * Math.sin(gap / 4) > fireflyRule.hit)
   b.step(0, 0, 0)
-  assert.deepEqual([east, south, between].map(hurt), [damage, damage, 0])
+  assert.deepEqual([first, next, between].map(hurt), [damage, damage, 0])
 })
 
 // --- Step 3.5: reaching the Duchess and her flower with every spell.
@@ -2175,4 +2178,25 @@ test('a hero who has won before may start with their own relic', () => {
   // The bellringer's cloak arrives as a whole sixth pip.
   assert.equal(new Battle(() => 0.5, 'ringer', 1, true).armor, MAX_ARMOR + 1)
   assert.equal(new Set(heroIds.map(id => heroes[id].variant)).size, heroIds.length)
+})
+
+// --- Found by simulation: one cast striking the same foe twice.
+
+test('a foe felled by the bloom of a spark is not struck again when the spark leaps to it', () => {
+  const b = hero('warden')
+  b.blessed.witchfire = true
+  // The third spark both blooms and leaps: the frail neighbour is named twice.
+  b.sparks = heroes.warden.chain - 1
+  const target = dummy(b, 50)
+  const frail = makeFoe('briarling', b.player.x + 50 + 30, b.player.y, 0, 0.1)
+  b.foes.push(frail)
+  // A bystander far away, last in the list, must not vanish in the frail foe's place.
+  const bystander = dummy(b, 0, 900)
+  const events = b.step(0, 0, 0)
+  assert.deepEqual(events.map(event => event.type), ['shot', 'bloom', 'kill', 'chain'])
+  assert.ok(b.foes.includes(target) && b.foes.includes(bystander))
+  assert.ok(!b.foes.includes(frail))
+  assert.equal(b.kills, 1)
+  assert.equal(b.embers.length, 1)
+  assert.equal(hurt(bystander), 0)
 })

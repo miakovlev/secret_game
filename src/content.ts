@@ -38,16 +38,16 @@ export const spells: Record<SpellId, Stats> = {
   toll: { cooldown: 1, damage: 5, range: 100, arc: 0, knockback: 60, spin: 0 },
   // A seed dropped behind a moving hero every `cooldown`; it bursts under the
   // first foe to reach it and burns everything within `range`.
-  seeds: { cooldown: 1.1, damage: 4, range: 54, arc: 0, knockback: 0, spin: 0 },
+  seeds: { cooldown: 1.2, damage: 3, range: 54, arc: 0, knockback: 0, spin: 0 },
   // Spirits circling at `range`; one stings a foe it crosses, and the same foe
   // again only after `cooldown`.
-  fireflies: { cooldown: 0.5, damage: 2.5, range: 78, arc: 0, knockback: 0, spin: 190 },
+  fireflies: { cooldown: 0.4, damage: 4.5, range: 70, arc: 0, knockback: 0, spin: 190 },
 }
 
 // A seed waits `life` seconds for a foe to come within `trigger` pixels.
 export const seedRule = { trigger: 26, life: 14 }
 // How many spirits circle the hero and how close one must pass to sting.
-export const fireflyRule = { count: 2, hit: 24 }
+export const fireflyRule = { count: 3, hit: 32 }
 
 // Each hero starts with one spell and has one gift that no card can give.
 export const heroIds = ['warden', 'duelist', 'ringer'] as const

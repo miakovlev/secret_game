@@ -658,6 +658,9 @@ export class Battle {
   }
 
   private strike(foe: Foe, damage: number, events: BattleEvent[]) {
+    // One cast can name the same foe twice (a spark blooms on it, then leaps
+    // to it); a foe already felled takes no second blow.
+    if (!this.foes.includes(foe)) return
     foe.health -= damage
     // Each threshold of her health passed begins a new phase, once.
     while (
