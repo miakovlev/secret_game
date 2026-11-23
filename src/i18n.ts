@@ -15,6 +15,15 @@ const en = {
   controls: 'or arrow keys to move',
   pause: 'Pause',
   heroLabel: 'Who keeps the watch',
+  volume: 'Sound',
+  tips: {
+    move: 'Move with W A S D or the arrow keys.',
+    ember: 'Banished foes leave embers. Walk over one to gather it.',
+    cards: 'A new level. Choose a card with a click or with keys 1, 2, 3.',
+    boar: 'A red lane marks a boar’s charge. Step out of it.',
+    archer: 'A pale line shows where an archer’s arrows will fly. Step aside.',
+    chest: 'A marked briarling left a reliquary. Walk up to it to choose a relic.',
+  },
   difficultyLabel: 'Difficulty',
   difficulties: [
     { name: 'First Watch', about: 'The court as it is.' },
@@ -148,6 +157,15 @@ const ru: typeof en = {
   controls: 'или стрелки · движение',
   pause: 'Пауза',
   heroLabel: 'Кто несёт дозор',
+  volume: 'Звук',
+  tips: {
+    move: 'Двигайся клавишами W A S D или стрелками.',
+    ember: 'Изгнанные враги оставляют угольки. Пройди по угольку, чтобы подобрать его.',
+    cards: 'Новый уровень. Выбери карточку щелчком или клавишами 1, 2, 3.',
+    boar: 'Красная полоса отмечает рывок вепря. Уйди с неё.',
+    archer: 'Светлая линия показывает, куда полетят стрелы лучника. Отойди в сторону.',
+    chest: 'Меченый корневик оставил реликварий. Подойди к нему, чтобы выбрать реликвию.',
+  },
   difficultyLabel: 'Сложность',
   difficulties: [
     { name: 'Первый дозор', about: 'Двор как он есть.' },

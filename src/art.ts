@@ -169,6 +169,39 @@ export function floorTexture() {
       p.stroke()
     }
     p.lineWidth = 1
+    // What is left of the chapel: a paved round with pillar stumps, broken
+    // walls and the altar where the last lantern was lit.
+    circle(p, centre.x, centre.y, 196, '#3a343a55')
+    p.strokeStyle = '#5a5058'
+    p.lineWidth = 3
+    p.beginPath()
+    p.arc(centre.x, centre.y, 196, 0, Math.PI * 2)
+    p.stroke()
+    p.lineWidth = 9
+    p.strokeStyle = '#4c444c'
+    for (const [from, to] of [[3.5, 4.3], [4.9, 5.6], [0.3, 0.9], [2.2, 2.9]]) {
+      p.beginPath()
+      p.arc(centre.x, centre.y, 214, from, to)
+      p.stroke()
+    }
+    p.lineWidth = 1
+    for (let i = 0; i < 8; i++) {
+      const turn = (i / 8) * Math.PI * 2 + Math.PI / 8
+      const px = centre.x + Math.cos(turn) * 172, py = centre.y + Math.sin(turn) * 172
+      circle(p, px + 2, py + 3, 14, '#1d1a22')
+      circle(p, px, py, 13, '#6a6068')
+      circle(p, px, py, 8, '#877c84')
+    }
+    const altar = { x: centre.x, y: centre.y - 150 }
+    const shine = p.createRadialGradient(altar.x, altar.y, 4, altar.x, altar.y, 70)
+    shine.addColorStop(0, '#f3ba6955')
+    shine.addColorStop(1, '#f3ba6900')
+    p.fillStyle = shine
+    p.fillRect(altar.x - 70, altar.y - 70, 140, 140)
+    box(p, altar.x - 30, altar.y - 12, 60, 24, '#5a5058')
+    box(p, altar.x - 26, altar.y - 9, 52, 18, '#7b7078')
+    polygon(p, [[altar.x - 6, altar.y - 6], [altar.x + 6, altar.y - 6], [altar.x + 8, altar.y + 6], [altar.x - 8, altar.y + 6]], '#c9a977')
+    circle(p, altar.x, altar.y, 4, '#fce7a6')
     roseWindow(p, centre.x, centre.y)
     grave(p, court.grave.x, court.grave.y)
     for (let i = 0; i < 11500 * (width * height) / 490000; i++) {

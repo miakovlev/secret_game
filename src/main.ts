@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
-import type { BattleEvent, Phase, Shot } from './battle'
+import type { BattleEvent, Foe, Phase, Shot } from './battle'
 import {
   archerVolley, boarCharge, court, difficulties, foes, garden, gardenerRule, heroes, heroIds, loadout, relicRule,
 } from './content'
@@ -12,6 +12,9 @@ import {
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
 import { load, settle, store } from './progress'
+import { Sound } from './sound'
+import type { Cue } from './sound'
+import { tipIds, Tutor } from './tutor'
 import type { Reward } from './progress'
 import './style.css'
 
@@ -43,6 +46,8 @@ const recordLine = document.querySelector<HTMLElement>('#record')!
 const variantRow = document.querySelector<HTMLElement>('#variant')!
 const variantBox = document.querySelector<HTMLInputElement>('#variant-box')!
 const variantText = document.querySelector<HTMLElement>('#variant-text')!
+const volume = document.querySelector<HTMLInputElement>('#volume')!
+const arena = document.querySelector<HTMLElement>('#arena')!
 const cardsLabel = document.querySelector<HTMLElement>('#cards-label')!
 const cardsMessage = document.querySelector<HTMLElement>('#cards-message')!
 const directions = new Set([
@@ -104,6 +109,16 @@ class Arena extends Phaser.Scene {
   private difficulty = this.progress.difficulty
   private variant = false
   private rewards: Reward[] = []
+  // Sound effects, the first-run tips, and what the scene watches to cue them:
+  // how far the hero has walked, where they stood last frame, how many dangers
+  // were marked, and the health of each foe a frame ago.
+  private sfx = new Sound()
+  private tutor = new Tutor(this.progress.tips)
+  private walked = 0
+  private stood = { x: 0, y: 0 }
+  private marked = 0
+  private healthBefore = new WeakMap<Foe, number>()
+  private struckAt = new WeakMap<Foe, number>()
   private settled?: Battle
   private battle = new Battle()
   private lastHero = ''
@@ -164,12 +179,26 @@ class Arena extends Phaser.Scene {
     languageButtons.en.onclick = () => selectLanguage('en')
     languageButtons.ru.onclick = () => selectLanguage('ru')
 
+    this.sfx.volume = this.progress.volume
+    volume.value = String(Math.round(this.progress.volume * 100))
+    volume.oninput = () => {
+      this.sfx.volume = Number(volume.value) / 100
+      this.progress = { ...this.progress, volume: this.sfx.volume }
+      store(this.progress)
+      this.sfx.unlock()
+      this.sfx.play('pick')
+    }
     action.onclick = () => {
+      this.sfx.unlock()
       if (this.battle.phase === 'paused') {
         this.battle.phase = 'playing'
       } else {
         this.battle = this.newRun()
         this.battle.phase = 'playing'
+        this.tutor = new Tutor(this.progress.tips)
+        this.walked = 0
+        this.stood = { ...this.battle.player }
+        this.marked = 0
         this.flash = undefined
         this.pictures = []
       }
@@ -290,6 +319,15 @@ class Arena extends Phaser.Scene {
     this.lastHero = ''
   }
 
+  // A wound shows three ways at once, so it is never missed: the camera
+  // shakes, the frame of the arena flashes red, and a low tone plays.
+  private wounded() {
+    this.sfx.play('hurt')
+    this.cameras.main.shake(140, 0.006)
+    arena.classList.add('hurt')
+    setTimeout(() => arena.classList.remove('hurt'), 180)
+  }
+
   private pauseRun = () => {
     if (this.battle.phase !== 'playing') return
     this.keys.clear()
@@ -328,16 +366,37 @@ class Arena extends Phaser.Scene {
       const dt = Math.min(remaining, 1 / 60)
       if (this.flash) this.flash.life -= dt
       for (const effect of this.pictures) effect.life -= dt
+      const armor = this.battle.armor
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
+        const cue = ({
+          shot: 'shot', kill: 'kill', pickup: 'pickup', level: 'level', heal: 'heal', open: 'chest',
+          slash: 'slash', toll: 'toll', burst: 'burst', arrow: 'arrow', lash: 'lash', garden: 'bell',
+          bell: 'bell', rise: 'rise', summon: 'rise', buds: 'rise', crown: 'crown', phase: 'lash',
+        } as Partial<Record<BattleEvent['type'], Cue>>)[event.type]
+        if (cue) this.sfx.play(cue)
         const span = {
-          pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, buds: 0.5, phase: 0.9, bloom: 0.22, summon: 0.5, rise: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          kill: 0.3, level: 0.6, pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, buds: 0.5, phase: 0.9, bloom: 0.22, summon: 0.5, rise: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
+      if (this.battle.armor < armor) this.wounded()
       remaining -= dt
     }
     this.pictures = this.pictures.filter(effect => effect.life > 0)
+    const b = this.battle
+    // A newly marked lane, aimed line or lash sector gets a warning tone.
+    const marked =
+      b.foes.filter(foe => foe.mode === 'windup' || foe.mode === 'aim').length +
+      Number(b.stage === 'garden' && b.lash.warned)
+    if (marked > this.marked) this.sfx.play('warn')
+    this.marked = marked
+    if (b.phase === 'won') this.sfx.play('win')
+    if (b.phase === 'lost') this.sfx.play('lose')
+    const step = Math.hypot(b.player.x - this.stood.x, b.player.y - this.stood.y)
+    // A long jump is the walk through the gate, not a step.
+    if (step < 40) this.walked += step
+    this.stood = { ...b.player }
     this.renderBattle()
   }
 
@@ -379,6 +438,15 @@ class Arena extends Phaser.Scene {
       image.setVisible(!!foe)
       if (!foe) return
       if (image.texture.key !== foe.kind) image.setTexture(foe.kind)
+      // A struck foe blinks pale for a moment.
+      const before = this.healthBefore.get(foe)
+      if (before !== undefined && foe.health < before) this.struckAt.set(foe, b.elapsed)
+      this.healthBefore.set(foe, foe.health)
+      const since = b.elapsed - (this.struckAt.get(foe) ?? -1)
+      if (since < 0.09) {
+        w.fillStyle(0xffffff, 0.55 * (1 - since / 0.09))
+        w.fillCircle(foe.x, foe.y, foes[foe.kind].reach + 4)
+      }
       const rooted = foe.kind === 'seal' || foe.kind === 'duchess' || foe.kind === 'gardener'
       const locked = foe.mode !== 'chase' && foe.mode !== 'rest'
       const pawing = foe.mode === 'windup' ? Math.sin(b.elapsed * 70) * 2 : 0
@@ -559,7 +627,20 @@ class Arena extends Phaser.Scene {
     }
     for (const { event, life, span } of this.pictures) {
       const fade = life / span
-      if (event.type === 'pickup') {
+      if (event.type === 'kill') {
+        // A puff of thorns where a foe was banished.
+        g.lineStyle(2, 0xffdb93, 0.8 * fade)
+        g.strokeCircle(event.at.x, event.at.y, 8 + (1 - fade) * 22)
+        g.fillStyle(0xbe8265, fade)
+        for (let i = 0; i < 5; i++) {
+          const turn = i * 1.257 + event.at.x
+          const far = 6 + (1 - fade) * 26
+          g.fillCircle(event.at.x + Math.cos(turn) * far, event.at.y + Math.sin(turn) * far, 3 * fade)
+        }
+      } else if (event.type === 'level') {
+        g.lineStyle(4, 0xe7bd78, fade)
+        g.strokeCircle(b.player.x, b.player.y, 24 + (1 - fade) * 90)
+      } else if (event.type === 'pickup') {
         g.lineStyle(1.5, 0xffc46b, fade)
         g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 14)
       } else if (event.type === 'chain') {
@@ -646,9 +727,29 @@ class Arena extends Phaser.Scene {
         g.strokeCircle(lord.x, lord.y, 48)
       }
     }
-    const tip = b.phase !== 'playing' || b.stage !== 'court'
-      ? ''
-      : lord ? messages[language].trialHint : b.trial === 'ready' ? messages[language].bellHint : ''
+    // First-run tips, remembered in the save as soon as each is learned.
+    const copy = messages[language]
+    const running = b.phase === 'playing' || b.phase === 'choosing'
+    const learnt = this.tutor.seen.size
+    const lesson = running
+      ? this.tutor.watch({
+        walked: this.walked,
+        embers: b.embers.length,
+        gathered: b.level > 1 || b.xp > 0 ? 1 : 0,
+        choosing: b.phase === 'choosing' && !b.openingChest && !b.blessing,
+        pawing: b.foes.some(foe => foe.kind === 'boar' && foe.mode === 'windup'),
+        aiming: b.foes.some(foe => foe.kind === 'archer' && foe.mode === 'aim'),
+        chest: b.reliquaries.length > 0 || b.openingChest,
+      })
+      : undefined
+    if (this.tutor.seen.size !== learnt) {
+      this.progress = { ...this.progress, tips: tipIds.filter(id => this.tutor.seen.has(id)) }
+      store(this.progress)
+    }
+    const trial = b.phase === 'playing' && b.stage === 'court'
+      ? lord ? copy.trialHint : b.trial === 'ready' ? copy.bellHint : ''
+      : ''
+    const tip = lesson ? copy.tips[lesson] : trial
     if (hint.textContent !== tip) hint.textContent = tip
     hint.hidden = !tip
     const timer = lady
@@ -720,6 +821,7 @@ class Arena extends Phaser.Scene {
   }
 
   private pick(index: number) {
+    if (this.battle.offer[index]) this.sfx.play('pick')
     this.battle.choose(index)
     this.renderBattle()
     if (this.battle.phase === 'choosing') this.showCards()

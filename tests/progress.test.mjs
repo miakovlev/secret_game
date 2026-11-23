@@ -3,6 +3,7 @@ import test from 'node:test'
 import { difficulties, heroes, heroIds } from '../src/content.ts'
 import { languageKey, readLanguage, saveLanguage } from '../src/i18n.ts'
 import { fresh, load, parse, saveKey, saveVersion, settle, store } from '../src/progress.ts'
+import { tipIds, Tutor } from '../src/tutor.ts'
 
 const run = (over = {}) => ({
   hero: 'warden', difficulty: 1, won: false, time: 300, kills: 80,
@@ -33,6 +34,8 @@ test('a new player has the first difficulty, the warden and empty records', () =
   assert.equal(start.difficulty, 1)
   assert.deepEqual(start.heroes, ['warden'])
   assert.deepEqual(start.variants, [])
+  assert.equal(start.volume, 0.6)
+  assert.deepEqual(start.tips, [])
   assert.equal(start.records.length, difficulties.length)
   assert.equal(difficulties.length, 3)
   for (const record of start.records) assert.deepEqual(record, { wins: 0, best: null, kills: 0 })
@@ -154,4 +157,75 @@ test('a damaged save never breaks the game', () => {
     assert.deepEqual(load(), fresh())
     assert.doesNotThrow(() => store(fresh()))
   })
+})
+
+test('settings are saved with the progress and survive a damaged value', () => {
+  const storage = memory()
+  withStorage(storage, () => {
+    const saved = { ...fresh(), volume: 0.25, tips: ['move', 'cards'] }
+    store(saved)
+    assert.deepEqual(load(), saved)
+    // A finished run keeps them.
+    const after = settle(load(), run({ won: true })).progress
+    assert.equal(after.volume, 0.25)
+    assert.deepEqual(after.tips, ['move', 'cards'])
+    assert.notEqual(after.tips, saved.tips)
+  })
+  assert.equal(parse(JSON.stringify({ volume: 0 })).volume, 0)
+  assert.equal(parse(JSON.stringify({ volume: 7 })).volume, 1)
+  assert.equal(parse(JSON.stringify({ volume: 'loud' })).volume, 0.6)
+  assert.equal(parse(JSON.stringify({ volume: -1 })).volume, 0.6)
+  assert.deepEqual(parse(JSON.stringify({ tips: ['chest', 'dance', 3, 'move'] })).tips, ['move', 'chest'])
+  assert.deepEqual(parse(JSON.stringify({ tips: 'move' })).tips, [])
+})
+
+// --- First-run tips.
+
+const calm = { walked: 0, embers: 0, gathered: 0, choosing: false, pawing: false, aiming: false, chest: false }
+
+test('a new player is told to move, then to gather an ember, then to pick a card', () => {
+  const tutor = new Tutor()
+  assert.deepEqual(tipIds, ['move', 'ember', 'cards', 'boar', 'archer', 'chest'])
+  assert.equal(tutor.watch(calm), 'move')
+  assert.equal(tutor.watch({ ...calm, walked: 30 }), 'move')
+  assert.deepEqual([...tutor.seen], [])
+  // Having walked, the tip is learned and nothing else needs saying yet.
+  assert.equal(tutor.watch({ ...calm, walked: 80 }), undefined)
+  assert.deepEqual([...tutor.seen], ['move'])
+  // An ember appears: the tip stays until one is gathered.
+  const walked = { ...calm, walked: 80 }
+  assert.equal(tutor.watch({ ...walked, embers: 2 }), 'ember')
+  assert.equal(tutor.watch({ ...walked, embers: 1 }), 'ember')
+  assert.equal(tutor.watch({ ...walked, embers: 1, gathered: 1 }), undefined)
+  // The first level-up: the tip stays while the cards are up.
+  const gathered = { ...walked, gathered: 5 }
+  assert.equal(tutor.watch({ ...gathered, choosing: true }), 'cards')
+  assert.equal(tutor.watch({ ...gathered, choosing: true }), 'cards')
+  assert.equal(tutor.watch(gathered), undefined)
+  assert.deepEqual([...tutor.seen], ['move', 'ember', 'cards'])
+  // None of them is said twice.
+  assert.equal(tutor.watch({ ...calm, embers: 3, choosing: true }), undefined)
+})
+
+test('dangers and the reliquary are explained when they first appear, the most pressing first', () => {
+  const tutor = new Tutor(['move', 'ember'])
+  const busy = { ...calm, walked: 500, gathered: 9 }
+  assert.equal(tutor.watch({ ...busy, chest: true, aiming: true, pawing: true }), 'boar')
+  // The tip on the line is not swapped mid-sentence for a more pressing one.
+  assert.equal(tutor.watch({ ...busy, chest: true, aiming: true, pawing: true, choosing: true }), 'boar')
+  assert.equal(tutor.watch({ ...busy, chest: true, aiming: true }), 'archer')
+  assert.equal(tutor.watch({ ...busy, chest: true }), 'chest')
+  assert.equal(tutor.watch({ ...busy, chest: true }), 'chest')
+  assert.equal(tutor.watch(busy), undefined)
+  assert.deepEqual([...tutor.seen].sort(), ['archer', 'boar', 'chest', 'ember', 'move'])
+  assert.equal(tutor.watch({ ...busy, pawing: true, aiming: true, chest: true }), undefined)
+  assert.equal(tutor.watch({ ...busy, choosing: true }), 'cards')
+})
+
+test('a player who has learned everything sees no tips', () => {
+  const tutor = new Tutor(tipIds)
+  for (const now of [calm, { ...calm, embers: 4, choosing: true, pawing: true, aiming: true, chest: true }]) {
+    assert.equal(tutor.watch(now), undefined)
+  }
+  assert.equal(tutor.showing, undefined)
 })

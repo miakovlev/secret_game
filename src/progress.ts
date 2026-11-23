@@ -1,5 +1,7 @@
 import { difficulties, heroes, heroIds } from './content.ts'
 import type { HeroId } from './content.ts'
+import { tipIds } from './tutor.ts'
+import type { TipId } from './tutor.ts'
 
 // What a player keeps between runs. Stored as JSON under one key, with a
 // version so that later shapes can be told from this one.
@@ -16,6 +18,9 @@ export type Progress = {
   variants: HeroId[]
   // One record per difficulty, first difficulty first.
   records: Record[]
+  // Settings: sound volume from 0 to 1, and the first-run tips already learned.
+  volume: number
+  tips: TipId[]
 }
 
 // What one finished run tells the save.
@@ -43,6 +48,8 @@ export function fresh(): Progress {
     heroes: heroIds.filter(id => heroes[id].opens === 'start'),
     variants: [],
     records: difficulties.map(() => ({ wins: 0, best: null, kills: 0 })),
+    volume: 0.6,
+    tips: [],
   }
 }
 
@@ -78,6 +85,8 @@ export function parse(raw: string | null): Progress {
         kills: Math.floor(whole(record.kills) ?? empty.kills),
       }
     }),
+    volume: Math.min(1, whole(save.volume) ?? base.volume),
+    tips: tipIds.filter(id => Array.isArray(save.tips) && save.tips.includes(id)),
   }
 }
 
@@ -104,6 +113,7 @@ export function settle(before: Progress, run: Outcome): { progress: Progress; re
     heroes: [...before.heroes],
     variants: [...before.variants],
     records: before.records.map(record => ({ ...record })),
+    tips: [...before.tips],
   }
   const rewards: Reward[] = []
   const record = progress.records[run.difficulty - 1]

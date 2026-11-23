@@ -68,6 +68,7 @@ async function seedSave(page: Page, save: object) {
 const everything = {
   version: 1, difficulty: 3, heroes: ['warden', 'duelist', 'ringer'], variants: ['warden', 'duelist', 'ringer'],
   records: [{ wins: 1, best: 700, kills: 200 }, { wins: 1, best: 720, kills: 200 }, { wins: 0, best: null, kills: 0 }],
+  volume: 0.6, tips: ['move', 'ember', 'cards', 'boar', 'archer', 'chest'],
 }
 
 async function frozenClock(page: Page) {
@@ -347,6 +348,8 @@ test('a reliquary offers relics that fill their own slots, level up and last the
 test('ringing the bell on the grave calls the Gardener, and felling him blesses one spell', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
+  // A seasoned player: the first-run tips are behind them.
+  await seedSave(page, { ...everything, heroes: ['warden'], variants: [] })
   await frozenClock(page)
   await page.evaluate(() => { Math.random = () => 0.05 })
   await page.getByRole('button', { name: 'Start run' }).click()
@@ -535,6 +538,109 @@ test('a damaged save does not stop the game from starting', async ({ page }) => 
   await expect(page.locator('#record')).toContainText('Побед пока нет.')
   await page.getByRole('button', { name: 'Начать забег' }).click()
   await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
+  expect(errors).toEqual([])
+})
+
+test('first-run tips lead a new player to move, gather an ember and pick a card, once', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await frozenClock(page)
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  const hint = page.locator('#hint')
+  const learned = () => page.evaluate(() => JSON.parse(localStorage.getItem('secret_game.save') ?? '{}').tips ?? [])
+  await expect(hint).toBeHidden()
+  await page.getByRole('button', { name: 'Start run' }).click()
+  await page.clock.runFor(100)
+  await expect(hint).toHaveText('Move with W A S D or the arrow keys.')
+  await select(page, 'ru')
+  await expect(hint).toHaveText('Двигайся клавишами W A S D или стрелками.')
+  await select(page, 'en')
+
+  // A few steps there and back: the tip is learned and saved at once.
+  for (const key of ['ArrowRight', 'ArrowLeft']) {
+    await page.keyboard.down(key)
+    await page.clock.runFor(250)
+    await page.keyboard.up(key)
+  }
+  await page.clock.runFor(100)
+  await expect(hint).toBeHidden()
+  expect(await learned()).toEqual(['move'])
+
+  // Briarlings fall and leave embers: the next tip says what to do with them.
+  await page.clock.runFor(14_000)
+  await expect(hint).toHaveText('Banished foes leave embers. Walk over one to gather it.')
+  await page.keyboard.down('ArrowLeft')
+  await page.clock.runFor(620)
+  await page.keyboard.up('ArrowLeft')
+  await page.keyboard.down('ArrowUp')
+  await page.clock.runFor(270)
+  await page.keyboard.up('ArrowUp')
+
+  // The embers bring the first level-up, and the tip explains the cards while they are up.
+  await expect(page.locator('#cards')).toBeVisible()
+  await expect(hint).toHaveText('A new level. Choose a card with a click or with keys 1, 2, 3.')
+  expect(await learned()).toEqual(['move', 'ember'])
+  await page.keyboard.press('Digit3')
+  await page.clock.runFor(100)
+  if (await page.locator('#cards').isVisible()) await page.keyboard.press('Digit3')
+  await page.clock.runFor(200)
+  await expect(page.locator('#cards')).toBeHidden()
+  await expect(hint).toBeHidden()
+  expect(await learned()).toEqual(['move', 'ember', 'cards'])
+
+  // The same player never reads them again.
+  await page.reload()
+  await expect(page.locator('#action')).toBeEnabled()
+  await page.getByRole('button', { name: 'Start run' }).click()
+  await page.clock.runFor(500)
+  await expect(hint).toBeHidden()
+  expect(errors).toEqual([])
+})
+
+test('sound plays by default, the volume is remembered, and a wound still shows with the sound off', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await frozenClock(page)
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  const slider = page.getByRole('slider', { name: 'Sound' })
+  const sounded = () => page.evaluate(() => ({ ...(window as any).arena.sfx.sounded }))
+  await expect(slider).toHaveValue('60')
+  await page.getByRole('button', { name: 'Start run' }).click()
+  await page.clock.runFor(8000)
+  const loud = await sounded()
+  // The audio clock runs in real time, not in the test's skipped time, so only the count being above zero is certain.
+  expect(loud.shot).toBeGreaterThan(0)
+
+  // Silence: nothing more is sent to the speakers, and the setting is saved.
+  await select(page, 'ru')
+  await expect(page.getByRole('slider', { name: 'Звук' })).toBeVisible()
+  await select(page, 'en')
+  await slider.fill('0')
+  const quiet = await sounded()
+  await page.clock.runFor(5000)
+  expect(await sounded()).toEqual(quiet)
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('secret_game.save')!).volume)).toBe(0)
+
+  // A briarling reaches the warden: the frame of the arena flashes without any sound.
+  await expect(page.locator('#arena')).not.toHaveClass(/hurt/)
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.immunity = 0
+    battle.foes[0] ? Object.assign(battle.foes[0], battle.player) : null
+  })
+  await page.clock.runFor(60)
+  await expect(page.locator('#arena')).toHaveClass(/hurt/)
+  await expect(page.getByRole('img', { name: 'Armor 4 of 5' })).toBeVisible()
+  await page.clock.runFor(400)
+  await expect(page.locator('#arena')).not.toHaveClass(/hurt/)
+  expect(await sounded()).toEqual(quiet)
+
+  await page.reload()
+  await expect(page.locator('#action')).toBeEnabled()
+  await expect(slider).toHaveValue('0')
+  await slider.fill('35')
+  await page.reload()
+  await expect(slider).toHaveValue('35')
   expect(errors).toEqual([])
 })
 

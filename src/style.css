@@ -368,6 +368,22 @@ kbd {
   padding: 0 4px;
   text-align: center;
 }
+.volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  margin-right: 18px;
+}
+.volume input {
+  width: 96px;
+  accent-color: var(--gold);
+}
+/* A wound flashes the frame of the arena, so it reads without sound too. */
+.arena.hurt {
+  border-color: #ff5a3c;
+  box-shadow: 0 0 0 3px #ff5a3c, 0 12px 45px #0004;
+}
 .pause {
   gap: 8px;
   background: none;
