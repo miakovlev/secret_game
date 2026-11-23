@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { Battle, DURATION, HEIGHT, MAX_ARMOR, WIDTH, xpGoal } from './battle'
-import type { Phase, Point, Shot } from './battle'
-import type { UpgradeId } from './content'
+import type { BattleEvent, Phase, Shot } from './battle'
+import { loadout } from './content'
 import { briarlingTexture, emberTexture, floorTexture, wardenTexture } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -23,6 +23,7 @@ const xpFill = xp.querySelector<HTMLElement>('i')!
 const cards = document.querySelector<HTMLElement>('#cards')!
 const cardsTitle = document.querySelector<HTMLElement>('#cards-title')!
 const choices = document.querySelector<HTMLElement>('#choices')!
+const slots = document.querySelector<HTMLElement>('#slots')!
 const directions = new Set([
   'KeyW',
   'KeyA',
@@ -81,10 +82,12 @@ class Arena extends Phaser.Scene {
   private embers: Phaser.GameObjects.Image[] = []
   private effects!: Phaser.GameObjects.Graphics
   private flash?: { shot: Shot; life: number }
-  private sparks: { at: Point; life: number }[] = []
+  // Short-lived pictures of pickups, blade swings and bell strokes.
+  private pictures: { event: BattleEvent; life: number; span: number }[] = []
   private lastPhase?: Phase
   private lastArmor = -1
   private lastGrowth = ''
+  private lastSlots = ''
 
   create() {
     this.textures.addCanvas('floor', floorTexture())
@@ -106,6 +109,7 @@ class Arena extends Phaser.Scene {
       localizePage()
       this.lastArmor = -1
       this.lastGrowth = ''
+      this.lastSlots = ''
       this.renderBattle()
       this.showPhase()
     }
@@ -119,7 +123,7 @@ class Arena extends Phaser.Scene {
         this.battle = new Battle()
         this.battle.phase = 'playing'
         this.flash = undefined
-        this.sparks = []
+        this.pictures = []
       }
       this.keys.clear()
       action.blur()
@@ -156,8 +160,7 @@ class Arena extends Phaser.Scene {
       event.preventDefault()
       this.keys.add(event.code)
     } else if (this.battle.phase === 'choosing' && /^Digit[1-9]$/.test(event.code)) {
-      const choice = this.battle.choices()[Number(event.code.slice(5)) - 1]
-      if (choice && !event.repeat) this.pick(choice.id)
+      if (!event.repeat) this.pick(Number(event.code.slice(5)) - 1)
     } else if (event.code === 'Escape' && !event.repeat) {
       if (this.battle.phase === 'paused') action.click()
       else this.pauseRun()
@@ -178,14 +181,15 @@ class Arena extends Phaser.Scene {
     while (remaining > 0 && this.battle.phase === 'playing') {
       const dt = Math.min(remaining, 1 / 60)
       if (this.flash) this.flash.life -= dt
-      for (const spark of this.sparks) spark.life -= dt
+      for (const effect of this.pictures) effect.life -= dt
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
-        if (event.type === 'pickup') this.sparks.push({ at: event.at, life: 0.25 })
+        const span = { pickup: 0.25, slash: 0.16, toll: 0.32 }[event.type as string]
+        if (span) this.pictures.push({ event, life: span, span })
       }
       remaining -= dt
     }
-    this.sparks = this.sparks.filter(spark => spark.life > 0)
+    this.pictures = this.pictures.filter(effect => effect.life > 0)
     this.renderBattle()
   }
 
@@ -218,10 +222,24 @@ class Arena extends Phaser.Scene {
           .setScale(1 + 0.12 * Math.sin(b.elapsed * 6 + ember.x))
     })
     const g = this.effects.clear()
-    for (const { at, life } of this.sparks) {
-      const fade = life / 0.25
-      g.lineStyle(1.5, 0xffc46b, fade)
-      g.strokeCircle(at.x, at.y, 6 + (1 - fade) * 14)
+    for (const { event, life, span } of this.pictures) {
+      const fade = life / span
+      if (event.type === 'pickup') {
+        g.lineStyle(1.5, 0xffc46b, fade)
+        g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 14)
+      } else if (event.type === 'slash') {
+        const { at, facing, range, arc } = event
+        g.fillStyle(0xcfd8ff, 0.4 * fade)
+        g.slice(at.x, at.y, range, facing - arc, facing + arc).fillPath()
+        g.lineStyle(2.5, 0xf2f5ff, fade)
+        g.beginPath().arc(at.x, at.y, range, facing - arc, facing + arc).strokePath()
+      } else if (event.type === 'toll') {
+        const radius = event.radius * (0.35 + 0.65 * (1 - fade))
+        g.fillStyle(0xe7bd78, 0.12 * fade)
+        g.fillCircle(event.at.x, event.at.y, radius)
+        g.lineStyle(3, 0xe7bd78, fade)
+        g.strokeCircle(event.at.x, event.at.y, radius)
+      }
     }
     g.lineStyle(1.5, b.immunity > 0 ? 0xff9c7b : 0xa2ebc4, 0.8)
     g.strokeCircle(b.player.x, b.player.y, 20)
@@ -253,6 +271,22 @@ class Arena extends Phaser.Scene {
       xp.setAttribute('aria-label', messages[language].xpValue(b.xp, goal))
       this.lastGrowth = growth
     }
+    const learned = b.loadout.join()
+    if (this.lastSlots !== learned) {
+      const copy = messages[language]
+      slots.replaceChildren(
+        ...Array.from({ length: loadout.slots }, (_, index) => {
+          const slot = document.createElement('span')
+          const spell = b.loadout[index]
+          slot.setAttribute('role', 'listitem')
+          slot.className = spell ? '' : 'empty'
+          slot.textContent = spell ? copy.spells[spell].name : '—'
+          if (!spell) slot.setAttribute('aria-label', copy.emptySlot)
+          return slot
+        }),
+      )
+      this.lastSlots = learned
+    }
     if (this.lastArmor !== b.armor) {
       Array.from(armor.children).forEach((pip, i) =>
         pip.classList.toggle('lost', i >= b.armor),
@@ -269,8 +303,8 @@ class Arena extends Phaser.Scene {
     this.lastPhase = b.phase
   }
 
-  private pick(id: UpgradeId) {
-    this.battle.choose(id)
+  private pick(index: number) {
+    this.battle.choose(index)
     this.renderBattle()
     if (this.battle.phase === 'choosing') this.showCards()
   }
@@ -279,18 +313,28 @@ class Arena extends Phaser.Scene {
     const copy = messages[language]
     cardsTitle.textContent = copy.levelTitle(this.battle.choiceLevel)
     choices.replaceChildren(
-      ...this.battle.choices().map((choice, index) => {
+      ...this.battle.offer.map((card, index) => {
         const button = document.createElement('button')
         const key = document.createElement('kbd')
+        const group = document.createElement('em')
         const name = document.createElement('b')
-        const change = document.createElement('span')
-        const { title, stat } = copy.upgrades[choice.id]
+        const detail = document.createElement('span')
+        const spell = copy.spells[card.spell]
         button.type = 'button'
         key.textContent = String(index + 1)
-        name.textContent = title
-        change.textContent = `${stat} ${shown(choice.from)} → ${shown(choice.to)}`
-        button.append(key, name, change)
-        button.onclick = () => this.pick(choice.id)
+        if (card.kind === 'learn') {
+          button.className = 'learn'
+          group.textContent = copy.newSpell
+          name.textContent = spell.name
+          detail.textContent = spell.about
+        } else {
+          const { title, stat } = copy.upgrades[card.id]
+          group.textContent = spell.name
+          name.textContent = title
+          detail.textContent = `${stat} ${shown(card.from)} → ${shown(card.to)}`
+        }
+        button.append(key, group, name, detail)
+        button.onclick = () => this.pick(index)
         return button
       }),
     )

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { briarling, upgrades, witchfire } from '../src/content.ts'
+import { briarling, loadout, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
+
+const witchfire = spells.witchfire
 import { Battle, DURATION, WIDTH, HEIGHT, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
 
 function playing(random = () => 0) {
@@ -42,7 +44,7 @@ test('diagonal and axial movement cover the same distance and turn the warden', 
 test('movement stops at each arena boundary', () => {
   const b = playing()
   // No kills, so no embers interrupt the walk with a level-up.
-  b.witchfire.range = 0
+  b.spells.witchfire.range = 0
   advance(b, 480, -1, -1)
   assert.deepEqual(b.player, { x: 22, y: 22 })
   advance(b, 540, 1, 1)
@@ -91,7 +93,7 @@ test('witchfire hits the nearest in-range target once and respects its cooldown'
   const b = playing()
   const foe = offset => ({ x: b.player.x + offset, y: b.player.y, speed: 0, health: 1 })
   const near = foe(35), far = foe(120), outside = foe(160)
-  b.witchfire.cooldown = 0.55
+  b.spells.witchfire.cooldown = 0.55
   b.foes = [outside, far, near]
   const at = { x: near.x, y: near.y }
   assert.deepEqual(b.step(0, 0, 0), [
@@ -166,7 +168,7 @@ test('experience beyond the goal carries over, even across two levels', () => {
   assert.deepEqual(b.step(0, 0, 0).map(event => event.type), ['pickup', 'level'])
   assert.equal(b.level, 2)
   assert.equal(b.xp, 2)
-  b.choose('range')
+  b.choose(0)
   drop(xpGoal(2) + xpGoal(3))
   const levels = b.step(0, 0, 0).filter(event => event.type === 'level')
   assert.deepEqual(levels.map(event => event.level), [3, 4])
@@ -183,7 +185,7 @@ test('a briarling survives witchfire until its health runs out', () => {
   Object.assign(foe, { x: b.player.x + 60, y: b.player.y, speed: 0 })
   const hits = Math.ceil(briarling.health / witchfire.damage)
   for (let hit = 1; hit <= hits; hit++) {
-    b.nextShot = 0
+    b.timers.witchfire = 0
     const types = b.step(0, 0, 0).map(event => event.type)
     assert.deepEqual(types, hit < hits ? ['shot'] : ['shot', 'kill'])
     assert.equal(b.foes.includes(foe), hit < hits)
@@ -207,11 +209,25 @@ function levelUp(b, levels = 1) {
   return b.step(1 / 60, 0, 0)
 }
 
-test('a level-up freezes foes, the clock and the cooldown until a card is chosen', () => {
+function learn(b, spell) {
+  b.loadout.push(spell)
+  b.spells[spell] = { ...spells[spell] }
+}
+
+// A foe that stands still and never dies, placed relative to the warden.
+function dummy(b, dx, dy = 0) {
+  const foe = { x: b.player.x + dx, y: b.player.y + dy, speed: 0, health: 1e9 }
+  b.foes.push(foe)
+  return foe
+}
+
+const hurt = foe => 1e9 - foe.health
+
+test('a level-up freezes foes, the clock and the cooldowns until a card is chosen', () => {
   const b = playing()
   advance(b, 30)
   b.foes.push({ x: b.player.x + 300, y: b.player.y, speed: 60, health: 3 })
-  b.nextShot = 0.1
+  b.timers.witchfire = 0.1
   levelUp(b)
   assert.equal(b.phase, 'choosing')
   assert.equal(b.choiceLevel, 2)
@@ -219,67 +235,183 @@ test('a level-up freezes foes, the clock and the cooldown until a card is chosen
   assert.deepEqual(b.step(1 / 60, 1, 0), [])
   advance(b, 120, 1, 1)
   assert.equal(JSON.stringify(b), before)
-  b.choose('rate')
+  b.choose(0)
   assert.equal(b.phase, 'playing')
+  assert.deepEqual(b.offer, [])
   advance(b, 1)
   assert.notEqual(JSON.stringify(b), before)
 })
 
-test('cards show the change and one choice applies exactly once', () => {
-  const b = playing()
-  const fresh = { ...b.witchfire }
-  b.choose('damage')
-  assert.deepEqual(b.witchfire, fresh)
+test('the first cards offer both new spells and one upgrade of the known spell', () => {
+  const b = playing(() => 0.5)
+  assert.deepEqual(b.loadout, ['witchfire'])
   levelUp(b)
-  const cards = Object.fromEntries(b.choices().map(card => [card.id, card]))
-  assert.deepEqual(Object.keys(cards), ['range', 'rate', 'damage'])
-  const hotter = upgrades.damage.apply(fresh).damage
-  assert.ok(hotter > fresh.damage)
-  assert.deepEqual(cards.damage, { id: 'damage', from: fresh.damage, to: hotter })
-  assert.ok(cards.range.to > cards.range.from)
-  assert.ok(cards.rate.to > cards.rate.from)
-  b.choose('damage')
-  b.choose('damage')
-  assert.deepEqual(b.witchfire, { ...fresh, damage: hotter })
-  assert.equal(b.choices().find(card => card.id === 'damage').from, hotter)
+  assert.deepEqual(b.offer.slice(0, 2), [
+    { kind: 'learn', spell: 'moonblade' },
+    { kind: 'learn', spell: 'toll' },
+  ])
+  assert.equal(b.offer.length, loadout.cards)
+  const card = b.offer[2]
+  assert.equal(card.kind, 'upgrade')
+  assert.equal(card.spell, 'witchfire')
+  assert.equal(card.from, shownValue(witchfire, card.id))
+  assert.equal(card.to, shownValue(upgraded(witchfire, card.id), card.id))
 })
 
-test('two levels at once give two choices in a row', () => {
-  const b = playing()
-  const fresh = { ...b.witchfire }
+test('one choice applies exactly once and learned spells fill the slots in order', () => {
+  const b = playing(() => 0.5)
+  b.choose(0)
+  assert.deepEqual(b.loadout, ['witchfire'])
+  levelUp(b)
+  b.choose(7)
+  assert.equal(b.phase, 'choosing')
+  b.choose(1)
+  b.choose(1)
+  assert.equal(b.phase, 'playing')
+  assert.deepEqual(b.loadout, ['witchfire', 'toll'])
+  assert.deepEqual(b.spells.toll, spells.toll)
+  assert.notEqual(b.spells.toll, spells.toll)
+
+  levelUp(b)
+  assert.deepEqual(b.offer[0], { kind: 'learn', spell: 'moonblade' })
+  const card = b.offer[1]
+  const before = { ...b.spells[card.spell] }
+  b.choose(1)
+  assert.deepEqual(b.spells[card.spell], upgraded(before, card.id))
+  assert.deepEqual(b.loadout, ['witchfire', 'toll'])
+})
+
+test('two levels at once give two sets of cards in a row', () => {
+  const b = playing(() => 0.5)
   levelUp(b, 2)
   assert.equal(b.level, 3)
   assert.equal(b.choiceLevel, 2)
-  b.choose('range')
+  b.choose(0)
   assert.equal(b.phase, 'choosing')
   assert.equal(b.choiceLevel, 3)
-  b.choose('rate')
+  assert.deepEqual(b.offer[0], { kind: 'learn', spell: 'toll' })
+  assert.equal(b.offer.length, loadout.cards)
+  b.choose(0)
   assert.equal(b.phase, 'playing')
-  assert.ok(b.witchfire.range > fresh.range)
-  assert.ok(b.witchfire.cooldown < fresh.cooldown)
-  assert.equal(b.witchfire.damage, fresh.damage)
+  assert.deepEqual(b.loadout, ['witchfire', 'moonblade', 'toll'])
 })
 
-test('range, rate and damage upgrades each change the fight', () => {
+test('with every slot taken the cards are distinct upgrades of learned spells', () => {
+  const slots = loadout.slots
+  loadout.slots = 2
+  try {
+    for (const roll of [0, 0.5, 0.99]) {
+      const b = playing(() => roll)
+      learn(b, 'toll')
+      levelUp(b)
+      assert.equal(b.offer.length, loadout.cards)
+      assert.equal(new Set(b.offer.map(card => card.id)).size, loadout.cards)
+      for (const card of b.offer) {
+        assert.equal(card.kind, 'upgrade')
+        assert.ok(b.loadout.includes(card.spell))
+        assert.notEqual(card.to, card.from)
+      }
+    }
+  } finally {
+    loadout.slots = slots
+  }
+})
+
+test('every upgrade belongs to a spell and changes the number its card shows', () => {
+  for (const id of upgradeIds) {
+    const stats = spells[upgrades[id].spell]
+    const better = upgraded(stats, id)
+    assert.notDeepEqual(better, stats)
+    assert.ok(shownValue(better, id) > shownValue(stats, id))
+  }
+})
+
+test('range, rate and damage upgrades each change the witchfire', () => {
   const shots = (upgrade, distance, frames) => {
     const b = playing()
-    if (upgrade) {
-      levelUp(b)
-      b.choose(upgrade)
-    }
-    b.foes = [{ x: b.player.x + distance, y: b.player.y, speed: 0, health: 1e9 }]
+    if (upgrade) b.spells.witchfire = upgraded(b.spells.witchfire, upgrade)
+    const foe = dummy(b, distance)
     let count = 0
     for (let i = 0; i < frames; i++) {
       count += b.step(1 / 60, 0, 0).filter(event => event.type === 'shot').length
       b.foes.length = 1
     }
-    return { count, health: 1e9 - b.foes[0].health }
+    return { count, health: hurt(foe) }
   }
   assert.equal(shots(null, witchfire.range + 10, 60).count, 0)
   assert.ok(shots('range', witchfire.range + 10, 60).count > 0)
   assert.ok(shots('rate', 60, 120).count > shots(null, 60, 120).count)
   const plain = shots(null, 60, 120), hot = shots('damage', 60, 120)
   assert.equal(hot.count, plain.count)
-  const gain = upgrades.damage.apply(witchfire).damage / witchfire.damage
+  const gain = upgraded(witchfire, 'damage').damage / witchfire.damage
   assert.ok(Math.abs(hot.health / plain.health - gain) < 1e-6)
+})
+
+test('the moon blade cuts along the last direction of movement, even after stopping', () => {
+  const b = playing()
+  b.spells.witchfire.range = 0
+  learn(b, 'moonblade')
+  b.timers.moonblade = 1
+  advance(b, 6, -1, 0)
+  advance(b, 6)
+  const { range, arc, damage } = spells.moonblade
+  const ahead = dummy(b, -range + 10)
+  const second = dummy(b, -40, 20)
+  const behind = dummy(b, range - 10)
+  const beside = dummy(b, 0, -40)
+  const beyond = dummy(b, -range - 10)
+  b.timers.moonblade = 0
+  const [slash] = b.step(0, 0, 0)
+  assert.deepEqual(slash, {
+    type: 'slash', at: { ...b.player }, facing: Math.PI, range, arc: (arc * Math.PI) / 180,
+  })
+  assert.deepEqual([ahead, second, behind, beside, beyond].map(hurt), [damage, damage, 0, 0, 0])
+
+  // A wider swing reaches the foe at the warden's side.
+  b.spells.moonblade.arc = 95
+  b.timers.moonblade = 0
+  b.step(0, 0, 0)
+  assert.equal(hurt(beside), damage)
+  assert.equal(hurt(behind), 0)
+})
+
+test('the funeral toll hurts and pushes back every foe inside its radius only', () => {
+  const b = playing()
+  b.spells.witchfire.range = 0
+  learn(b, 'toll')
+  const { range, knockback, damage } = spells.toll
+  const left = dummy(b, -range + 5)
+  const below = dummy(b, 0, 30)
+  const under = dummy(b, 0)
+  const outside = dummy(b, range + 5)
+  const events = b.step(0, 0, 0)
+  assert.deepEqual(events, [{ type: 'toll', at: { ...b.player }, radius: range }])
+  assert.deepEqual([left, below, under, outside].map(hurt), [damage, damage, damage, 0])
+  assert.equal(left.x, b.player.x - range + 5 - knockback)
+  assert.equal(below.y, b.player.y + 30 + knockback)
+  assert.deepEqual({ x: under.x, y: under.y }, b.player)
+  assert.equal(outside.x, b.player.x + range + 5)
+})
+
+test('each spell keeps its own cooldown and area spells leave embers too', () => {
+  const b = playing()
+  learn(b, 'moonblade')
+  learn(b, 'toll')
+  dummy(b, 60)
+  b.foes.push({ x: b.player.x + 30, y: b.player.y, speed: 0, health: 0.1 })
+  const counts = { shot: 0, slash: 0, toll: 0, kill: 0 }
+  const seconds = 4
+  for (let i = 0; i < seconds * 60; i++) {
+    for (const event of b.step(1 / 60, 0, 0)) counts[event.type]++
+    b.foes.length = Math.min(b.foes.length, 2)
+  }
+  for (const [type, id] of [['shot', 'witchfire'], ['slash', 'moonblade'], ['toll', 'toll']]) {
+    const expected = seconds / spells[id].cooldown
+    assert.ok(Math.abs(counts[type] - expected) <= 2, type + ' ' + counts[type])
+  }
+  assert.ok(counts.shot > counts.slash && counts.slash > counts.toll)
+  assert.equal(counts.kill, 1)
+  assert.equal(b.kills, 1)
+  // The ember fell within reach and was collected on the next step.
+  assert.equal(b.embers.length + b.xp, 1)
 })

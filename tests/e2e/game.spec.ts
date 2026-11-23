@@ -110,14 +110,18 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
   await expect(page.locator('#level')).toHaveText(/^[2-9]$/)
   await expect(page.getByRole('progressbar', { name: /^Experience \d+ of [7-9]/ })).toBeVisible()
 
-  // The level-up stops the run and offers three witchfire upgrades.
+  // The level-up stops the run and offers both new spells and a witchfire upgrade.
   const cards = page.locator('#choices button')
+  const slots = page.locator('#slots [role=listitem]')
   await expect(page.getByRole('heading', { name: 'Level 2' })).toBeVisible()
   await expect(page.locator('#status')).toHaveText('LEVEL UP')
   await expect(cards).toHaveCount(3)
-  await expect(cards.nth(0)).toContainText('Range 145 → 175')
-  await expect(cards.nth(1)).toContainText('Casts per second 5.3 → 7')
-  await expect(cards.nth(2)).toContainText('Damage 1 → 1.5')
+  await expect(cards.nth(0)).toContainText('New spell')
+  await expect(cards.nth(0)).toContainText('Moon Blade')
+  await expect(cards.nth(1)).toContainText('Funeral Toll')
+  await expect(cards.nth(2)).toContainText('Witchfire')
+  await expect(cards.nth(2)).toContainText('Range 145 → 175')
+  await expect(slots).toHaveText(['Witchfire', '—', '—'])
   const time = await page.locator('#clock').innerText()
   const banished = await page.locator('#kills').innerText()
   await page.keyboard.press('Escape')
@@ -129,13 +133,16 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
   await expect(page.locator('#kills')).toHaveText(banished)
   await select(page, 'ru')
   await expect(page.getByRole('heading', { name: 'Уровень 2' })).toBeVisible()
-  await expect(cards.nth(2)).toContainText('Урон 1 → 1.5')
+  await expect(cards.nth(1)).toContainText('Новое заклинание')
+  await expect(cards.nth(2)).toContainText('Дальность 145 → 175')
   await expect(page.getByRole('progressbar', { name: /^Опыт \d+ из [7-9]/ })).toBeVisible()
 
-  await cards.nth(2).click()
-  // One click applies the upgrade once and the run goes on; the next level offers the next step.
+  // One click learns the spell once and the run goes on with it in the second slot.
+  await cards.nth(1).click()
   await expect(page.locator('#cards')).toBeHidden()
   await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
+  await expect(slots).toHaveText(['Ведьмин огонь', 'Погребальный звон', '—'])
+  await expect(page.getByRole('listitem', { name: 'Пустая ячейка' })).toHaveCount(1)
   await page.clock.runFor(1500)
   await expect(page.locator('#clock')).not.toHaveText(time)
   // Keep circling the spot where briarlings fall until the next ember fills the bar.
@@ -145,15 +152,19 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
     await page.clock.runFor(500)
     await page.keyboard.up(key)
   }
+  // The learned spell is no longer offered; its place goes to another upgrade.
   await expect(page.getByRole('heading', { name: 'Уровень 3' })).toBeVisible()
-  await expect(cards.nth(2)).toContainText('Урон 1.5 → 2')
-  await expect(cards.nth(1)).toContainText('Вспышек в секунду 5.3 → 7')
-  await page.keyboard.press('Digit2')
+  await expect(cards.nth(0)).toContainText('Лунный клинок')
+  await expect(cards.nth(1)).toContainText('Дальность 145 → 175')
+  await expect(cards.nth(2)).toContainText('Вспышек в секунду 5.3 → 7')
+  await page.keyboard.press('Digit1')
   await expect(page.locator('#cards')).toBeHidden()
+  await expect(slots).toHaveText(['Ведьмин огонь', 'Погребальный звон', 'Лунный клинок'])
 })
 
-// Plays a whole run in small slices, taking a damage or rate card whenever one is offered.
-// A patrolling warden walks to the ember pile and back, which is enough to win.
+// Plays a whole run in small slices. Whenever cards are offered it learns a new spell,
+// or else takes a damage or rate upgrade. A patrolling warden walks to the ember pile
+// and back, which is enough to win.
 async function playRun(page: Page, patrol: boolean) {
   let held: string | undefined
   let picks = 0
@@ -166,10 +177,13 @@ async function playRun(page: Page, patrol: boolean) {
     if (choosing) {
       if (held) await page.keyboard.up(held)
       held = undefined
-      await page.locator('#choices button').nth(2 - (picks++ % 2)).click()
+      const texts = await page.locator('#choices button').allInnerTexts()
+      const wanted = ['Moon Blade', 'Funeral Toll', picks++ % 2 ? 'Quicker flame' : 'Hotter fire']
+      const found = wanted.map(text => texts.findIndex(card => card.includes(text))).find(index => index >= 0)
+      await page.locator('#choices button').nth(found ?? 0).click()
     }
     const beat = ms % 2000
-    const key = !patrol || ms < 10_000 || beat >= 1400 ? undefined : beat < 700 ? 'ArrowLeft' : 'ArrowRight'
+    const key = !patrol || ms < 10_000 || beat >= 1200 ? undefined : beat < 600 ? 'ArrowLeft' : 'ArrowRight'
     if (key !== held) {
       if (held) await page.keyboard.up(held)
       if (key) await page.keyboard.down(key)
@@ -191,6 +205,7 @@ for (const outcome of ['victory', 'defeat'] as const) {
     const won = outcome === 'victory'
     const picks = await playRun(page, won)
     expect(picks).toBeGreaterThan(won ? 2 : 0)
+    if (won) await expect(page.locator('#slots [role=listitem]')).toHaveText(['Witchfire', 'Moon Blade', 'Funeral Toll'])
     await expect(page.locator('#title')).toHaveText(won ? 'The chapel stands' : 'The briars prevail')
     const kills = Number(await page.locator('#kills').innerText())
     expect(kills).toBeGreaterThan(0)
@@ -210,6 +225,7 @@ for (const outcome of ['victory', 'defeat'] as const) {
     await expect(page.locator('#clock')).toHaveText('01:00')
     await expect(page.locator('#kills')).toHaveText('00')
     await expect(page.locator('#level')).toHaveText('1')
+    await expect(page.locator('#slots [role=listitem]')).toHaveText(['Ведьмин огонь', '—', '—'])
     await expect(page.getByRole('progressbar', { name: 'Опыт 0 из 5' })).toBeVisible()
     await expect(page.getByRole('img', { name: 'Броня 5 из 5' })).toBeVisible()
     expect(errors).toEqual([])

@@ -201,6 +201,19 @@ h1 {
 .choices b {
   font-size: 1.05rem;
 }
+.choices em {
+  font-style: normal;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.choices .learn {
+  border-bottom-color: #a9dfc4;
+}
+.choices .learn span {
+  color: #cdd0c3;
+}
 .choices span {
   color: var(--gold);
   font-size: 0.875rem;
@@ -297,8 +310,14 @@ footer span {
 .equipment {
   margin-left: auto;
 }
-.equipment b {
+.slots span {
+  padding: 2px 8px;
+  border: 1px solid #606557;
+  color: #eeeee3;
+}
+.slots span.empty {
   color: #777c6f;
+  border-style: dashed;
 }
 .warden-dot,
 .briarling-dot {
@@ -349,7 +368,7 @@ footer span {
     padding: 16px;
   }
   .arena:has(.cards:not([hidden])) {
-    min-height: 330px;
+    min-height: 370px;
   }
   .cards {
     left: 50%;
@@ -370,8 +389,12 @@ footer span {
     align-items: center;
     padding: 7px 9px;
   }
+  .choices em,
   .choices span {
     grid-column: 2;
+  }
+  .choices kbd {
+    grid-row: span 3;
   }
   .cards h2 {
     font-size: 28px;
