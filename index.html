@@ -33,12 +33,17 @@
             <div><small data-copy="kills">BANISHED</small><strong id="kills">00</strong></div>
           </div>
         </div>
+        <div class="growth">
+          <small data-copy="level">LEVEL</small>
+          <strong id="level">1</strong>
+          <div class="xp" id="xp" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-label="Experience 0 of 5"><i></i></div>
+        </div>
         <div class="arena" id="arena">
           <div id="game" role="group" data-label="arena" aria-label="Chapel courtyard, top view"></div>
           <div class="panel" id="panel" role="region" aria-labelledby="title">
             <span class="eyebrow" id="panel-label">THE FIRST VIGIL</span>
             <h2 id="title">Until first light</h2>
-            <p id="message">Hold the chapel court for 60 seconds until dawn. Keep clear of the briarlings. Your lantern casts witchfire at the nearest foe.</p>
+            <p id="message">Hold the chapel court for 60 seconds until dawn. Keep clear of the briarlings. Your lantern casts witchfire at the nearest foe, and the embers left behind raise your level.</p>
             <button id="action" disabled>Loading arena…</button>
           </div>
         </div>
@@ -52,6 +57,7 @@
       <footer>
         <span><i class="warden-dot"></i><span data-copy="warden">Dawn Warden</span></span>
         <span><i class="briarling-dot"></i><span data-copy="briarling">Briarling</span></span>
+        <span><i class="ember-dot"></i><span data-copy="ember">Ember</span></span>
         <span class="equipment"><span data-copy="weapon">Weapon</span><b>/</b><span data-copy="witchfire">Witchfire</span></span>
       </footer>
       <noscript>Enable JavaScript to play. <span lang="ru">Для игры включите JavaScript.</span></noscript>

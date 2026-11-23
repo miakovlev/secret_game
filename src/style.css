@@ -76,7 +76,33 @@ small {
 .telemetry {
   justify-content: space-between;
   gap: 24px;
-  padding: 24px 0 18px;
+  padding: 24px 0 12px;
+}
+.growth {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+.growth small {
+  margin: 0;
+}
+.growth strong {
+  min-width: 2ch;
+  font-variant-numeric: tabular-nums;
+}
+.xp {
+  flex: 1;
+  height: 8px;
+  background: #34382f;
+  border: 1px solid #555a4e;
+}
+.xp i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--gold);
+  transition: width 0.15s;
 }
 small {
   display: block;
@@ -249,6 +275,13 @@ footer span {
 .briarling-dot {
   background: #ff865e;
   transform: rotate(45deg);
+}
+.ember-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffc46b;
+  box-shadow: 0 0 6px #ff9a3c;
 }
 @media (max-width: 760px) {
   main {

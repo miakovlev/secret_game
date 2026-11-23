@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { Battle, DURATION, WIDTH, HEIGHT, MAX_ARMOR } from '../src/battle.ts'
+import { Battle, DURATION, WIDTH, HEIGHT, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
 
 function playing(random = () => 0) {
   const battle = new Battle(random)
@@ -22,6 +22,9 @@ test('new runs have full armor, an empty arena and independent state', () => {
   assert.equal(fresh.kills, 0)
   assert.equal(fresh.immunity, 0)
   assert.deepEqual(fresh.foes, [])
+  assert.deepEqual(fresh.embers, [])
+  assert.equal(fresh.xp, 0)
+  assert.equal(fresh.level, 1)
   assert.notDeepEqual(fresh.player, old.player)
 })
 
@@ -86,8 +89,13 @@ test('witchfire hits the nearest in-range target once and respects its cooldown'
   const foe = offset => ({ x: b.player.x + offset, y: b.player.y, speed: 0 })
   const near = foe(35), far = foe(120), outside = foe(160)
   b.foes = [outside, far, near]
-  assert.deepEqual(b.step(0, 0, 0)?.to, { x: near.x, y: near.y })
+  const at = { x: near.x, y: near.y }
+  assert.deepEqual(b.step(0, 0, 0), [
+    { type: 'shot', from: { ...b.player }, to: at },
+    { type: 'kill', at },
+  ])
   assert.equal(b.kills, 1)
+  assert.deepEqual(b.embers, [{ ...at, value: 1 }])
   advance(b, 32)
   assert.ok(b.foes.includes(far))
   advance(b, 2)
@@ -125,7 +133,38 @@ for (const phase of ['ready', 'paused', 'won', 'lost']) {
     advance(b, 15)
     b.phase = phase
     const before = JSON.stringify(b)
+    assert.deepEqual(b.step(1 / 60, 1, 1), [])
     advance(b, 120, 1, 1)
     assert.equal(JSON.stringify(b), before)
   })
 }
+
+test('a distant ember stays on the ground and is collected once within reach', () => {
+  const b = playing()
+  const ember = { x: b.player.x + PICKUP_RADIUS + 60, y: b.player.y, value: 1 }
+  b.embers = [ember]
+  advance(b, 30)
+  assert.deepEqual(b.embers, [ember])
+  assert.equal(b.xp, 0)
+  const events = []
+  for (let i = 0; i < 30; i++) events.push(...b.step(1 / 60, 1, 0))
+  assert.deepEqual(events, [{ type: 'pickup', at: { x: ember.x, y: ember.y } }])
+  assert.deepEqual(b.embers, [])
+  advance(b, 30, -1, 0)
+  assert.equal(b.xp, 1)
+  assert.equal(b.level, 1)
+})
+
+test('experience beyond the goal carries over, even across two levels', () => {
+  const b = playing()
+  const drop = value => { b.embers.push({ ...b.player, value }) }
+  drop(xpGoal(1) + 2)
+  assert.deepEqual(b.step(0, 0, 0).map(event => event.type), ['pickup', 'level'])
+  assert.equal(b.level, 2)
+  assert.equal(b.xp, 2)
+  drop(xpGoal(2) + xpGoal(3))
+  const levels = b.step(0, 0, 0).filter(event => event.type === 'level')
+  assert.deepEqual(levels.map(event => event.level), [3, 4])
+  assert.equal(b.xp, 2)
+  assert.ok(xpGoal(2) > xpGoal(1))
+})

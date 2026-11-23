@@ -153,3 +153,15 @@ export function briarlingTexture() {
     circle(p,7,3,2,'#ffbf85')
   })
 }
+
+export function emberTexture() {
+  return texture(26, 26, p => {
+    const glow = p.createRadialGradient(13, 13, 1, 13, 13, 13)
+    glow.addColorStop(0, '#ff9a3caa')
+    glow.addColorStop(1, '#ff7a2c00')
+    p.fillStyle = glow
+    p.fillRect(0, 0, 26, 26)
+    polygon(p, [[13,7],[18,13],[13,19],[8,13]], '#ffb45e')
+    polygon(p, [[13,10],[15,13],[13,16],[11,13]], '#fff0b8')
+  })
+}

@@ -17,8 +17,10 @@ test('both catalogs have the same complete set of nonempty messages', () => {
   compare(messages.en, messages.ru)
   assert.equal(messages.en.armorValue(2, 5), 'Armor 2 of 5')
   assert.equal(messages.ru.armorValue(2, 5), 'Броня 2 из 5')
-  assert.equal(messages.en.result('00:34', 7), 'Time survived: 00:34. Briarlings banished: 7.')
-  assert.equal(messages.ru.result('00:34', 7), 'Время в бою — 00:34. Изгнано корневиков — 7.')
+  assert.equal(messages.en.xpValue(2, 5), 'Experience 2 of 5')
+  assert.equal(messages.ru.xpValue(2, 5), 'Опыт 2 из 5')
+  assert.equal(messages.en.result('00:34', 7, 3), 'Time survived: 00:34. Briarlings banished: 7. Level reached: 3.')
+  assert.equal(messages.ru.result('00:34', 7, 3), 'Время в бою — 00:34. Изгнано корневиков — 7. Достигнут уровень — 3.')
 })
 
 function withStorage(storage, check) {

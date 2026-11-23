@@ -10,11 +10,13 @@ const en = {
   armor: 'ARMOR',
   timer: 'UNTIL DAWN',
   kills: 'BANISHED',
+  level: 'LEVEL',
   arena: 'Chapel courtyard, top view',
   controls: 'or arrow keys to move',
   pause: 'Pause',
   warden: 'Dawn Warden',
   briarling: 'Briarling',
+  ember: 'Ember',
   weapon: 'Weapon',
   witchfire: 'Witchfire',
   loading: 'Loading arena…',
@@ -24,7 +26,7 @@ const en = {
   },
   ready: {
     label: 'THE FIRST VIGIL', title: 'Until first light',
-    message: 'Hold the chapel court for 60 seconds until dawn. Keep clear of the briarlings. Your lantern casts witchfire at the nearest foe.',
+    message: 'Hold the chapel court for 60 seconds until dawn. Keep clear of the briarlings. Your lantern casts witchfire at the nearest foe, and the embers left behind raise your level.',
     action: 'Start run',
   },
   paused: {
@@ -35,7 +37,9 @@ const en = {
   lost: { label: 'THE BELLS FALL SILENT', title: 'The briars prevail' },
   retry: 'Play again',
   armorValue: (value: number, max: number) => `Armor ${value} of ${max}`,
-  result: (time: string, kills: number) => `Time survived: ${time}. Briarlings banished: ${kills}.`,
+  xpValue: (value: number, goal: number) => `Experience ${value} of ${goal}`,
+  result: (time: string, kills: number, level: number) =>
+    `Time survived: ${time}. Briarlings banished: ${kills}. Level reached: ${level}.`,
 }
 
 const ru: typeof en = {
@@ -48,11 +52,13 @@ const ru: typeof en = {
   armor: 'БРОНЯ',
   timer: 'ДО РАССВЕТА',
   kills: 'ИЗГНАНО',
+  level: 'УРОВЕНЬ',
   arena: 'Двор часовни, вид сверху',
   controls: 'или стрелки · движение',
   pause: 'Пауза',
   warden: 'Дозорная',
   briarling: 'Корневик',
+  ember: 'Уголёк',
   weapon: 'Оружие',
   witchfire: 'Ведьмин огонь',
   loading: 'Загрузка арены…',
@@ -62,7 +68,7 @@ const ru: typeof en = {
   },
   ready: {
     label: 'ПЕРВЫЙ ДОЗОР', title: 'До первых лучей',
-    message: 'Продержись 60 секунд до рассвета. Уходи от корневиков. Фонарь сам выпускает ведьмин огонь в ближайшего врага.',
+    message: 'Продержись 60 секунд до рассвета. Уходи от корневиков. Фонарь сам выпускает ведьмин огонь в ближайшего врага, а угольки на земле повышают уровень.',
     action: 'Начать забег',
   },
   paused: {
@@ -73,7 +79,9 @@ const ru: typeof en = {
   lost: { label: 'КОЛОКОЛА УМОЛКЛИ', title: 'Терновник победил' },
   retry: 'Ещё раз',
   armorValue: (value, max) => `Броня ${value} из ${max}`,
-  result: (time, kills) => `Время в бою — ${time}. Изгнано корневиков — ${kills}.`,
+  xpValue: (value, goal) => `Опыт ${value} из ${goal}`,
+  result: (time, kills, level) =>
+    `Время в бою — ${time}. Изгнано корневиков — ${kills}. Достигнут уровень — ${level}.`,
 }
 
 export const messages = { en, ru }

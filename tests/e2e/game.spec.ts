@@ -91,6 +91,28 @@ test('switching during a run or pause preserves the HUD and the simulation', asy
   await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible()
 })
 
+test('walking to the embers of banished briarlings earns a level', async ({ page }) => {
+  await frozenClock(page)
+  // Every briarling enters from the same spot, so the embers pile up up-left of the warden.
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  await page.getByRole('button', { name: 'Start run' }).click()
+  await page.clock.runFor(20_000)
+  expect(Number(await page.locator('#kills').innerText())).toBeGreaterThan(4)
+  await expect(page.locator('#level')).toHaveText('1')
+  await expect(page.getByRole('progressbar', { name: 'Experience 0 of 5' })).toBeVisible()
+
+  await page.keyboard.down('ArrowLeft')
+  await page.clock.runFor(860)
+  await page.keyboard.up('ArrowLeft')
+  await page.keyboard.down('ArrowUp')
+  await page.clock.runFor(300)
+  await page.keyboard.up('ArrowUp')
+  await expect(page.locator('#level')).toHaveText(/^[2-9]$/)
+  await expect(page.getByRole('progressbar', { name: /^Experience \d+ of [7-9]/ })).toBeVisible()
+  await select(page, 'ru')
+  await expect(page.getByRole('progressbar', { name: /^Опыт \d+ из [7-9]/ })).toBeVisible()
+})
+
 for (const outcome of ['victory', 'defeat'] as const) {
   test(outcome + ' can be translated and restarted', async ({ page }) => {
     const errors: string[] = []
@@ -107,16 +129,20 @@ for (const outcome of ['victory', 'defeat'] as const) {
     const report = await page.locator('#message').innerText()
     const time = report.match(/\d\d:\d\d/)![0]
     expect(report).toContain('Briarlings banished: ' + kills)
+    const level = await page.locator('#level').innerText()
+    expect(report).toContain('Level reached: ' + level)
     if (won) expect(time).toBe('01:00')
     else await expect(page.getByRole('img', { name: 'Armor 0 of 5' })).toBeVisible()
 
     await select(page, 'ru')
     await expect(page.locator('#title')).toHaveText(won ? 'Часовня устояла' : 'Терновник победил')
-    await expect(page.locator('#message')).toHaveText(`Время в бою — ${time}. Изгнано корневиков — ${kills}.`)
+    await expect(page.locator('#message')).toHaveText(`Время в бою — ${time}. Изгнано корневиков — ${kills}. Достигнут уровень — ${level}.`)
     await page.getByRole('button', { name: 'Ещё раз' }).click()
     await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
     await expect(page.locator('#clock')).toHaveText('01:00')
     await expect(page.locator('#kills')).toHaveText('00')
+    await expect(page.locator('#level')).toHaveText('1')
+    await expect(page.getByRole('progressbar', { name: 'Опыт 0 из 5' })).toBeVisible()
     await expect(page.getByRole('img', { name: 'Броня 5 из 5' })).toBeVisible()
     expect(errors).toEqual([])
   })

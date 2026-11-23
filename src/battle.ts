@@ -3,9 +3,22 @@ export const WIDTH = 1000
 export const HEIGHT = 490
 export const DURATION = 60
 export const MAX_ARMOR = 5
+export const PICKUP_RADIUS = 48
 export type Point = { x: number; y: number }
 export type Foe = Point & { speed: number }
+export type Ember = Point & { value: number }
 export type Shot = { from: Point; to: Point }
+// Everything that happened during one step, in order, for the scene to show.
+export type BattleEvent =
+  | ({ type: 'shot' } & Shot)
+  | { type: 'kill'; at: Point }
+  | { type: 'pickup'; at: Point }
+  | { type: 'level'; level: number }
+
+// Experience needed to leave the given level.
+export function xpGoal(level: number) {
+  return 3 + level * 2
+}
 export type Phase = 'ready' | 'playing' | 'paused' | 'won' | 'lost'
 
 export class Battle {
@@ -13,6 +26,9 @@ export class Battle {
   player: Point = { x: 625, y: 244 }
   facing = 0
   foes: Foe[] = []
+  embers: Ember[] = []
+  xp = 0
+  level = 1
   armor = MAX_ARMOR
   kills = 0
   elapsed = 0
@@ -42,13 +58,32 @@ export class Battle {
     this.foes.push(foe)
   }
 
-  step(dt: number, dx: number, dy: number): Shot | undefined {
-    if (this.phase !== 'playing') return
+  private collect(events: BattleEvent[]) {
+    this.embers = this.embers.filter(ember => {
+      const distance = Math.hypot(
+        ember.x - this.player.x,
+        ember.y - this.player.y,
+      )
+      if (distance > PICKUP_RADIUS) return true
+      this.xp += ember.value
+      events.push({ type: 'pickup', at: { x: ember.x, y: ember.y } })
+      while (this.xp >= xpGoal(this.level)) {
+        this.xp -= xpGoal(this.level)
+        this.level++
+        events.push({ type: 'level', level: this.level })
+      }
+      return false
+    })
+  }
+
+  step(dt: number, dx: number, dy: number): BattleEvent[] {
+    const events: BattleEvent[] = []
+    if (this.phase !== 'playing') return events
     this.elapsed += dt
     if (this.elapsed >= DURATION) {
       this.elapsed = DURATION
       this.phase = 'won'
-      return
+      return events
     }
     const length = Math.hypot(dx, dy)
     if (length) {
@@ -62,6 +97,7 @@ export class Battle {
         Math.min(HEIGHT - 22, this.player.y + (160 * dt * dy) / length),
       )
     }
+    this.collect(events)
 
     this.nextSpawn -= dt
     if (this.nextSpawn <= 0) {
@@ -90,7 +126,7 @@ export class Battle {
         this.immunity = 1.25
         if (this.armor === 0) {
           this.phase = 'lost'
-          return
+          return events
         }
       }
       if (remaining < nearest) {
@@ -104,7 +140,11 @@ export class Battle {
       const [foe] = this.foes.splice(closest, 1)
       this.kills++
       this.nextShot = 0.55
-      return { from: { ...this.player }, to: { x: foe.x, y: foe.y } }
+      const at = { x: foe.x, y: foe.y }
+      this.embers.push({ ...at, value: 1 })
+      events.push({ type: 'shot', from: { ...this.player }, to: at })
+      events.push({ type: 'kill', at })
     }
+    return events
   }
 }

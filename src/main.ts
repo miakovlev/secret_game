@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
-import { Battle, DURATION, HEIGHT, MAX_ARMOR, WIDTH } from './battle'
-import type { Phase, Shot } from './battle'
-import { briarlingTexture, floorTexture, wardenTexture } from './art'
+import { Battle, DURATION, HEIGHT, MAX_ARMOR, WIDTH, xpGoal } from './battle'
+import type { Phase, Point, Shot } from './battle'
+import { briarlingTexture, emberTexture, floorTexture, wardenTexture } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
 import './style.css'
@@ -16,6 +16,9 @@ const pause = document.querySelector<HTMLButtonElement>('#pause')!
 const armor = document.querySelector<HTMLElement>('#armor')!
 const clock = document.querySelector<HTMLElement>('#clock')!
 const kills = document.querySelector<HTMLElement>('#kills')!
+const level = document.querySelector<HTMLElement>('#level')!
+const xp = document.querySelector<HTMLElement>('#xp')!
+const xpFill = xp.querySelector<HTMLElement>('i')!
 const directions = new Set([
   'KeyW',
   'KeyA',
@@ -54,6 +57,7 @@ title.textContent = initial.ready.title
 message.textContent = initial.ready.message
 action.textContent = initial.loading
 armor.setAttribute('aria-label', initial.armorValue(MAX_ARMOR, MAX_ARMOR))
+xp.setAttribute('aria-label', initial.xpValue(0, xpGoal(1)))
 
 function timeText(seconds: number) {
   return (
@@ -70,15 +74,19 @@ class Arena extends Phaser.Scene {
   private keys = new Set<string>()
   private warden!: Phaser.GameObjects.Image
   private foes: Phaser.GameObjects.Image[] = []
+  private embers: Phaser.GameObjects.Image[] = []
   private effects!: Phaser.GameObjects.Graphics
   private flash?: { shot: Shot; life: number }
+  private sparks: { at: Point; life: number }[] = []
   private lastPhase?: Phase
   private lastArmor = -1
+  private lastGrowth = ''
 
   create() {
     this.textures.addCanvas('floor', floorTexture())
     this.textures.addCanvas('warden', wardenTexture())
     this.textures.addCanvas('briarling', briarlingTexture())
+    this.textures.addCanvas('ember', emberTexture())
     this.add.image(0, 0, 'floor').setOrigin(0)
     this.warden = this.add.image(0, 0, 'warden').setDepth(2)
     this.effects = this.add.graphics().setDepth(3)
@@ -93,6 +101,7 @@ class Arena extends Phaser.Scene {
       saveLanguage(next)
       localizePage()
       this.lastArmor = -1
+      this.lastGrowth = ''
       this.renderBattle()
       this.showPhase()
     }
@@ -106,6 +115,7 @@ class Arena extends Phaser.Scene {
         this.battle = new Battle()
         this.battle.phase = 'playing'
         this.flash = undefined
+        this.sparks = []
       }
       this.keys.clear()
       action.blur()
@@ -161,10 +171,14 @@ class Arena extends Phaser.Scene {
     while (remaining > 0 && this.battle.phase === 'playing') {
       const dt = Math.min(remaining, 1 / 60)
       if (this.flash) this.flash.life -= dt
-      const shot = this.battle.step(dt, dx, dy)
-      if (shot) this.flash = { shot, life: 0.17 }
+      for (const spark of this.sparks) spark.life -= dt
+      for (const event of this.battle.step(dt, dx, dy)) {
+        if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
+        if (event.type === 'pickup') this.sparks.push({ at: event.at, life: 0.25 })
+      }
       remaining -= dt
     }
+    this.sparks = this.sparks.filter(spark => spark.life > 0)
     this.renderBattle()
   }
 
@@ -185,7 +199,23 @@ class Arena extends Phaser.Scene {
           .setPosition(foe.x, foe.y)
           .setRotation(Math.atan2(b.player.y - foe.y, b.player.x - foe.x))
     })
+    while (this.embers.length < b.embers.length) {
+      this.embers.push(this.add.image(0, 0, 'ember').setDepth(0.5))
+    }
+    this.embers.forEach((image, index) => {
+      const ember = b.embers[index]
+      image.setVisible(!!ember)
+      if (ember)
+        image
+          .setPosition(ember.x, ember.y)
+          .setScale(1 + 0.12 * Math.sin(b.elapsed * 6 + ember.x))
+    })
     const g = this.effects.clear()
+    for (const { at, life } of this.sparks) {
+      const fade = life / 0.25
+      g.lineStyle(1.5, 0xffc46b, fade)
+      g.strokeCircle(at.x, at.y, 6 + (1 - fade) * 14)
+    }
     g.lineStyle(1.5, b.immunity > 0 ? 0xff9c7b : 0xa2ebc4, 0.8)
     g.strokeCircle(b.player.x, b.player.y, 20)
     if (this.flash && this.flash.life > 0) {
@@ -206,6 +236,16 @@ class Arena extends Phaser.Scene {
     const count = String(b.kills).padStart(2, '0')
     if (clock.textContent !== timer) clock.textContent = timer
     if (kills.textContent !== count) kills.textContent = count
+    const goal = xpGoal(b.level)
+    const growth = b.level + ':' + b.xp
+    if (this.lastGrowth !== growth) {
+      level.textContent = String(b.level)
+      xpFill.style.width = (100 * b.xp) / goal + '%'
+      xp.setAttribute('aria-valuemax', String(goal))
+      xp.setAttribute('aria-valuenow', String(b.xp))
+      xp.setAttribute('aria-label', messages[language].xpValue(b.xp, goal))
+      this.lastGrowth = growth
+    }
     if (this.lastArmor !== b.armor) {
       Array.from(armor.children).forEach((pip, i) =>
         pip.classList.toggle('lost', i >= b.armor),
@@ -235,7 +275,7 @@ class Arena extends Phaser.Scene {
       message.textContent = copy[b.phase].message
       action.textContent = copy[b.phase].action
     } else {
-      message.textContent = copy.result(timeText(Math.floor(b.elapsed)), b.kills)
+      message.textContent = copy.result(timeText(Math.floor(b.elapsed)), b.kills, b.level)
       action.textContent = copy.retry
     }
   }
