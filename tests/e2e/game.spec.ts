@@ -57,6 +57,19 @@ test('storage denied still permits switching and playing', async ({ page }) => {
   await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
 })
 
+// Starts the page with the given save already in storage, unless one is there:
+// a reload must find what the game itself has stored.
+async function seedSave(page: Page, save: object) {
+  await page.addInitScript((json: string) => {
+    if (!localStorage.getItem('secret_game.save')) localStorage.setItem('secret_game.save', json)
+  }, JSON.stringify(save))
+}
+
+const everything = {
+  version: 1, difficulty: 3, heroes: ['warden', 'duelist', 'ringer'], variants: ['warden', 'duelist', 'ringer'],
+  records: [{ wins: 1, best: 700, kills: 200 }, { wins: 1, best: 720, kills: 200 }, { wins: 0, best: null, kills: 0 }],
+}
+
 async function frozenClock(page: Page) {
   await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') })
   await startPage(page)
@@ -200,6 +213,7 @@ async function playRun(page: Page, patrol: boolean, limit: number) {
 test('the hero picked on the title screen sets the starting spell, and can be changed between runs', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
+  await seedSave(page, everything)
   await frozenClock(page)
   await expect(page.getByRole('radiogroup', { name: 'Who keeps the watch' })).toBeVisible()
   const heroes = page.locator('#heroes').getByRole('radio')
@@ -409,6 +423,118 @@ test('ringing the bell on the grave calls the Gardener, and felling him blesses 
   await page.getByRole('button', { name: 'Play again' }).click()
   await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire')
   expect((await state()).trial).toBe('asleep')
+  expect(errors).toEqual([])
+})
+
+test('winning opens the next difficulty and a starting relic, and the save survives a reload', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await frozenClock(page)
+  const levels = page.getByRole('radiogroup', { name: 'Difficulty' }).getByRole('radio')
+  const heroes = page.locator('#heroes').getByRole('radio')
+  const variant = page.locator('#variant-box')
+
+  // A new player: one difficulty, one hero, no starting relic, no record.
+  await expect(levels).toHaveText(['First Watch', 'Two Gates', 'Early Bells'])
+  await expect(levels.nth(0)).toHaveAttribute('aria-checked', 'true')
+  await expect(levels.nth(1)).toBeDisabled()
+  await expect(levels.nth(2)).toBeDisabled()
+  await expect(page.locator('#record')).toContainText('No win yet.')
+  await expect(page.locator('#record')).toContainText('Win on First Watch to open.')
+  await expect(heroes.nth(0)).toBeEnabled()
+  await expect(heroes.nth(1)).toBeDisabled()
+  await expect(heroes.nth(1)).toContainText('Locked. Reach the throne garden once.')
+  await expect(heroes.nth(2)).toContainText('Locked. Fell the Gardener once.')
+  await expect(variant).toBeDisabled()
+  await expect(page.locator('#variant')).toContainText('Win with this hero to start with Amber Beads.')
+  await select(page, 'ru')
+  await expect(page.locator('#record')).toContainText('Побед пока нет.')
+  await expect(heroes.nth(2)).toContainText('Закрыт. Победи Садовника.')
+  await select(page, 'en')
+
+  // Win the run: reach the garden with the Gardener felled on the way, then fell the Duchess.
+  await page.getByRole('button', { name: 'Start run' }).click()
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.trial = 'won'
+    battle.elapsed = 539.5
+    battle.armor = 5
+  })
+  await page.clock.runFor(1500)
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    Object.assign(battle.spells.witchfire, { range: 2000, damage: 400 })
+  })
+  for (let slice = 0; slice < 80 && await page.locator('#panel').isHidden(); slice++) await page.clock.runFor(250)
+  await expect(page.locator('#title')).toHaveText('The crown is lifted')
+  const report = page.locator('#message')
+  await expect(report).toContainText('Difficulty: First Watch.')
+  await expect(report).toContainText('New best time.')
+  await expect(report).toContainText('New difficulty: Two Gates.')
+  await expect(report).toContainText('Dawn Warden may now start with Amber Beads.')
+  await expect(report).toContainText('New hero: Duelist.')
+  await expect(report).toContainText('New hero: Bellringer.')
+  await select(page, 'ru')
+  await expect(report).toContainText('Новая сложность: Двое ворот.')
+  await expect(report).toContainText('Дозорная теперь может начинать с реликвией «Янтарные чётки».')
+  await select(page, 'en')
+
+  // The reward is usable at once on the result screen.
+  await expect(levels.nth(1)).toBeEnabled()
+  await expect(levels.nth(2)).toBeDisabled()
+  await expect(heroes.nth(1)).toBeEnabled()
+  await expect(heroes.nth(2)).toBeEnabled()
+  await expect(variant).toBeEnabled()
+  await expect(page.locator('#record')).toContainText(/Best time 09:\d\d · wins 1\./)
+
+  // And it is still there after the page is loaded again.
+  await page.reload()
+  await expect(page.locator('#action')).toBeEnabled()
+  await expect(levels.nth(1)).toBeEnabled()
+  await expect(levels.nth(1)).toHaveAttribute('aria-checked', 'true')
+  await expect(heroes.nth(2)).toBeEnabled()
+  await levels.nth(0).click()
+  await expect(page.locator('#record')).toContainText(/Best time 09:\d\d · wins 1\./)
+  await expect(variant).toBeEnabled()
+  await variant.check()
+  await expect(page.locator('#relics [role=listitem]')).toHaveText(['Amber Beads 1', '—', '—'])
+
+  // A new run on the second difficulty starts the build over but keeps the unlocks.
+  await levels.nth(1).click()
+  await page.getByRole('button', { name: 'Start run' }).click()
+  expect(await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    return [battle.difficulty, battle.level, battle.loadout.join(), JSON.stringify(battle.relics)]
+  })).toEqual([2, 1, 'witchfire', '{"beads":1}'])
+  // Losing it changes nothing that was earned.
+  await page.evaluate(() => { (window as any).arena.battle.armor = 1 })
+  await page.clock.pauseAt(new Date('2026-01-01T00:05:00Z'))
+  for (let slice = 0; slice < 900 && await page.locator('#panel').isHidden(); slice++) {
+    await page.clock.runFor(250)
+    if (await page.locator('#cards').isVisible()) await page.keyboard.press('Digit1')
+  }
+  await expect(page.locator('#title')).toHaveText('The briars prevail')
+  await expect(report).toContainText('Difficulty: Two Gates.')
+  await expect(report).not.toContainText('New ')
+  await expect(levels.nth(1)).toBeEnabled()
+  await expect(levels.nth(2)).toBeDisabled()
+  expect(errors).toEqual([])
+})
+
+test('a damaged save does not stop the game from starting', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await page.addInitScript(() => {
+    localStorage.setItem('secret_game.save', '{"version":1,"difficulty":"all","heroes":[42')
+    localStorage.setItem('secret_game.language', 'ru')
+  })
+  await startPage(page)
+  // The language chosen earlier is kept; everything else starts fresh.
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  await expect(page.locator('#levels').getByRole('radio').nth(1)).toBeDisabled()
+  await expect(page.locator('#record')).toContainText('Побед пока нет.')
+  await page.getByRole('button', { name: 'Начать забег' }).click()
+  await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
   expect(errors).toEqual([])
 })
 

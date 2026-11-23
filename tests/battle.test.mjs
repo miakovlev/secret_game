@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archerVolley, blessings, boarCharge, court, fireflyRule, foes, garden, gardenerRule, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
+import { archerVolley, blessings, boarCharge, court, difficulties, fireflyRule, foes, garden, gardenerRule, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
   relics, seedRule, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
@@ -2031,4 +2031,95 @@ test('blessings and relics earned in the court still work in the duel', () => {
   const events = b.step(1 / 60, 0, 0)
   assert.ok(events.some(event => event.type === 'bloom'))
   assert.equal(hurt(beside), witchfire.damage * blessings.witchfire.share)
+})
+
+// --- Step 3.6: difficulties and starting relics.
+
+test('a harder difficulty makes every foe tougher', () => {
+  assert.deepEqual(difficulties.map(level => level.toughness > 0), [true, true, true])
+  assert.ok(difficulties[1].toughness > difficulties[0].toughness)
+  assert.ok(difficulties[2].toughness > difficulties[1].toughness)
+  for (const [index, { toughness }] of difficulties.entries()) {
+    const b = new Battle(() => 0.5, 'warden', index + 1)
+    b.phase = 'playing'
+    assert.equal(b.difficulty, index + 1)
+    b.elapsed = 40
+    b.step(0, 0, 0)
+    const first = b.foes.find(foe => foe.kind === 'briarling')
+    assert.ok(Math.abs(first.health - (briarling.health + 40 * briarling.healthGrowth) * toughness) < 1e-9)
+    b.elapsed = DURATION
+    b.step(1 / 60, 0, 0)
+    assert.ok(Math.abs(b.duchess.health - foes.duchess.health * toughness) < 1e-9)
+    assert.ok(Math.abs(b.foes.find(foe => foe.kind === 'seal').full - foes.seal.health * toughness) < 1e-9)
+  }
+  assert.equal(new Battle().difficulty, 1)
+})
+
+test('from the second difficulty every third group is matched from the opposite side', () => {
+  const groups = level => {
+    const b = new Battle(seeded(3), 'warden', level)
+    b.phase = 'playing'
+    b.spells.witchfire.range = 0
+    b.armor = Infinity
+    const sides = []
+    // Count briarlings of the first wave, burst by burst, and note where each stands.
+    const every = waves[0].every
+    for (let burst = 1; burst <= 6; burst++) {
+      b.foes = []
+      while (b.foes.length === 0) b.step(1 / 60, 0, 0)
+      const camera = b.camera()
+      sides.push(b.foes.map(foe =>
+        foe.x < camera.x ? 'left' : foe.x > camera.x + view.width ? 'right' : foe.y < camera.y ? 'top' : 'bottom',
+      ))
+      assert.ok(b.elapsed < burst * every + 0.1)
+    }
+    return sides
+  }
+  assert.equal(difficulties[0].flankEvery, 0)
+  assert.equal(difficulties[1].flankEvery, 3)
+  assert.deepEqual(groups(1).map(sides => sides.length), [1, 1, 1, 1, 1, 1])
+  const flanked = groups(2)
+  assert.deepEqual(flanked.map(sides => sides.length), [1, 1, 2, 1, 1, 2])
+  const opposite = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }
+  for (const sides of flanked.filter(entry => entry.length === 2)) assert.equal(sides[1], opposite[sides[0]])
+})
+
+test('on the third difficulty every wave starts earlier and overlaps the one before', () => {
+  const { early } = difficulties[2]
+  assert.ok(early > 0)
+  assert.equal(difficulties[1].early, 0)
+  const boars = waves.find(wave => wave.kind === 'boar').from
+  const seen = level => {
+    const b = new Battle(seeded(), 'warden', level)
+    b.phase = 'playing'
+    b.spells.witchfire.range = 0
+    b.armor = Infinity
+    b.elapsed = boars - early - 1
+    b.step(0, 0, 0)
+    b.foes = []
+    advance(b, 120)
+    return b.foes.some(foe => foe.kind === 'boar')
+  }
+  assert.deepEqual([seen(1), seen(2), seen(3)], [false, false, true])
+  // The run is not shorter for it: the garden still opens at dawn.
+  const late = new Battle(seeded(), 'warden', 3)
+  late.phase = 'playing'
+  late.elapsed = DURATION - 1
+  late.step(1 / 60, 0, 0)
+  assert.equal(late.stage, 'court')
+})
+
+test('a hero who has won before may start with their own relic', () => {
+  for (const id of heroIds) {
+    const plain = new Battle(() => 0.5, id)
+    assert.deepEqual(plain.relics, {})
+    assert.equal(plain.armor, MAX_ARMOR)
+    const geared = new Battle(() => 0.5, id, 1, true)
+    assert.deepEqual(geared.relics, { [heroes[id].variant]: 1 })
+    assert.ok(relicIds.includes(heroes[id].variant))
+    assert.equal(geared.armor, geared.maxArmor)
+  }
+  // The bellringer's cloak arrives as a whole sixth pip.
+  assert.equal(new Battle(() => 0.5, 'ringer', 1, true).armor, MAX_ARMOR + 1)
+  assert.equal(new Set(heroIds.map(id => heroes[id].variant)).size, heroIds.length)
 })

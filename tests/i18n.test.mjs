@@ -29,6 +29,17 @@ test('both catalogs have the same complete set of nonempty messages', () => {
   assert.equal(messages.ru.blessLine('Ведьмин огонь'), 'Благословлено: Ведьмин огонь.')
   assert.equal(messages.en.phaseLine(2), 'Duel phase reached: 2 of 2.')
   assert.equal(messages.ru.phaseLine(1), 'Достигнута фаза дуэли: 1 из 2.')
+  for (const [lang, name, relic] of [['en', 'Two Gates', 'Hourglass'], ['ru', 'Двое ворот', 'Песочные часы']]) {
+    const copy = messages[lang]
+    for (const line of [
+      copy.lockedDifficulty(name), copy.difficultyLine(name), copy.rewardDifficulty(name), copy.rewardHero(name),
+    ]) assert.ok(line.includes(name))
+    for (const line of [copy.variantLabel(relic), copy.variantLocked(relic), copy.rewardVariant(name, relic)]) {
+      assert.ok(line.includes(relic))
+    }
+    assert.ok(copy.recordLine('10:12', 3).includes('10:12') && copy.recordLine('10:12', 3).includes('3'))
+    assert.equal(copy.difficulties.length, 3)
+  }
   assert.equal(messages.en.levelTitle(2), 'Level 2')
   assert.equal(messages.ru.levelTitle(2), 'Уровень 2')
   assert.equal(messages.en.xpValue(2, 5), 'Experience 2 of 5')

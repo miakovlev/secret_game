@@ -61,12 +61,17 @@ export type Hero = {
   chainRange: number
   // Multiplies how far the funeral toll pushes foes.
   knockback: number
+  // What opens the hero: available from the start, after first reaching the
+  // throne garden, or after first felling the Gardener.
+  opens: 'start' | 'garden' | 'gardener'
+  // The relic the hero may start with once a run has been won with them.
+  variant: RelicId
 }
 
 export const heroes: Record<HeroId, Hero> = {
-  warden: { spell: 'witchfire', speed: 160, chain: 3, chainRange: 120, knockback: 1 },
-  duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1 },
-  ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6 },
+  warden: { spell: 'witchfire', speed: 160, chain: 3, chainRange: 120, knockback: 1, opens: 'start', variant: 'beads' },
+  duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1, opens: 'garden', variant: 'boots' },
+  ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6, opens: 'gardener', variant: 'cloak' },
 }
 
 // A hero can hold `slots` spells. A level-up shows `cards` cards, at most
@@ -75,6 +80,16 @@ export const loadout = { slots: 3, cards: 3, learnCards: 2 }
 
 // Experience needed to leave level 1, and how much more each later level asks.
 export const leveling = { first: 5, growth: 3 }
+
+// Three difficulties, opened one by one by winning. `toughness` multiplies
+// the health of every foe. With `flankEvery`, every such group of a wave is
+// matched by a second one from the opposite side. `early` moves the start of
+// every wave that many seconds forward, so later waves overlap earlier ones.
+export const difficulties = [
+  { toughness: 1, flankEvery: 0, early: 0 },
+  { toughness: 1.15, flankEvery: 3, early: 0 },
+  { toughness: 1.3, flankEvery: 3, early: 45 },
+]
 
 // Seconds of waves before dawn.
 export const run = { duration: 540 }

@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Phase, Shot } from './battle'
 import {
-  archerVolley, boarCharge, court, foes, garden, gardenerRule, heroes, heroIds, loadout, relicRule,
+  archerVolley, boarCharge, court, difficulties, foes, garden, gardenerRule, heroes, heroIds, loadout, relicRule,
 } from './content'
 import type { HeroId, RelicId } from './content'
 import {
@@ -11,6 +11,8 @@ import {
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
+import { load, settle, store } from './progress'
+import type { Reward } from './progress'
 import './style.css'
 
 const panel = document.querySelector<HTMLElement>('#panel')!
@@ -36,6 +38,11 @@ const heroList = document.querySelector<HTMLElement>('#heroes')!
 const heroName = document.querySelector<HTMLElement>('#hero-name')!
 const relicList = document.querySelector<HTMLElement>('#relics')!
 const hint = document.querySelector<HTMLElement>('#hint')!
+const levelList = document.querySelector<HTMLElement>('#levels')!
+const recordLine = document.querySelector<HTMLElement>('#record')!
+const variantRow = document.querySelector<HTMLElement>('#variant')!
+const variantBox = document.querySelector<HTMLInputElement>('#variant-box')!
+const variantText = document.querySelector<HTMLElement>('#variant-text')!
 const cardsLabel = document.querySelector<HTMLElement>('#cards-label')!
 const cardsMessage = document.querySelector<HTMLElement>('#cards-message')!
 const directions = new Set([
@@ -91,6 +98,13 @@ function timeText(seconds: number) {
 class Arena extends Phaser.Scene {
   // The hero picked for the next run; a finished run keeps its own on the result screen.
   private hero: HeroId = 'warden'
+  // What the player keeps between runs, the difficulty and starting relic
+  // picked for the next run, and what the last finished run earned.
+  private progress = load()
+  private difficulty = this.progress.difficulty
+  private variant = false
+  private rewards: Reward[] = []
+  private settled?: Battle
   private battle = new Battle()
   private lastHero = ''
   private keys = new Set<string>()
@@ -154,7 +168,7 @@ class Arena extends Phaser.Scene {
       if (this.battle.phase === 'paused') {
         this.battle.phase = 'playing'
       } else {
-        this.battle = new Battle(undefined, this.hero)
+        this.battle = this.newRun()
         this.battle.phase = 'playing'
         this.flash = undefined
         this.pictures = []
@@ -179,8 +193,13 @@ class Arena extends Phaser.Scene {
   }
 
   // Three still briarlings pose beside the chosen hero on the title screen.
+  private newRun() {
+    const geared = this.variant && this.progress.variants.includes(this.hero)
+    return new Battle(undefined, this.hero, this.difficulty, geared)
+  }
+
   private titleScreen() {
-    const battle = new Battle(undefined, this.hero)
+    const battle = this.newRun()
     const { x, y } = battle.player
     battle.foes = [[131, -106], [190, -56], [88, 104]].map(([dx, dy]) =>
       makeFoe('briarling', x + dx, y + dy, 0, 1),
@@ -188,33 +207,87 @@ class Arena extends Phaser.Scene {
     return battle
   }
 
-  private pickHero(id: HeroId) {
-    this.hero = id
+  // A choice for the next run: the title screen shows it at once, a result
+  // screen keeps showing the run that has just ended.
+  private choose(change: () => void) {
+    change()
     if (this.battle.phase === 'ready') this.battle = this.titleScreen()
     this.lastHero = ''
     this.renderBattle()
   }
 
-  // The picker shows wherever a new run can start: the title and both result screens.
+  // The pickers show wherever a new run can start: the title and both result screens.
   private showHeroes() {
     const copy = messages[language]
+    const saved = this.progress
+    levelList.replaceChildren(
+      ...difficulties.map((_, index) => {
+        const button = document.createElement('button')
+        const open = index < saved.difficulty
+        button.type = 'button'
+        button.setAttribute('role', 'radio')
+        button.setAttribute('aria-checked', String(index + 1 === this.difficulty))
+        button.disabled = !open
+        button.textContent = copy.difficulties[index].name
+        if (!open) button.title = copy.lockedDifficulty(copy.difficulties[index - 1].name)
+        button.onclick = () => this.choose(() => { this.difficulty = index + 1 })
+        return button
+      }),
+    )
+    const record = saved.records[this.difficulty - 1]
+    recordLine.textContent = [
+      copy.difficulties[this.difficulty - 1].about,
+      record.best === null ? copy.noRecord : copy.recordLine(timeText(Math.floor(record.best)), record.wins),
+      ...(saved.difficulty < difficulties.length
+        ? [copy.lockedDifficulty(copy.difficulties[saved.difficulty - 1].name)]
+        : []),
+    ].join(' ')
     heroList.replaceChildren(
       ...heroIds.map(id => {
         const button = document.createElement('button')
         const name = document.createElement('b')
         const spell = document.createElement('em')
         const gift = document.createElement('span')
+        const { opens } = heroes[id]
+        const open = saved.heroes.includes(id)
         button.type = 'button'
         button.setAttribute('role', 'radio')
         button.setAttribute('aria-checked', String(id === this.hero))
+        button.disabled = !open
         name.textContent = copy.heroes[id].name
         spell.textContent = copy.spells[heroes[id].spell].name
-        gift.textContent = copy.heroes[id].gift
+        gift.textContent = open || opens === 'start' ? copy.heroes[id].gift : copy.locks[opens]
         button.append(name, spell, gift)
-        button.onclick = () => this.pickHero(id)
+        button.onclick = () => this.choose(() => { this.hero = id })
         return button
       }),
     )
+    const relic = copy.relics[heroes[this.hero].variant].name
+    const earned = saved.variants.includes(this.hero)
+    variantBox.disabled = !earned
+    variantBox.checked = earned && this.variant
+    variantText.textContent = earned ? copy.variantLabel(relic) : copy.variantLocked(relic)
+    variantBox.onchange = () => this.choose(() => { this.variant = variantBox.checked })
+  }
+
+  // Adds a finished run to the save, once, and remembers what it earned.
+  private settle() {
+    const b = this.battle
+    if (this.settled === b) return
+    this.settled = b
+    const { progress, rewards } = settle(this.progress, {
+      hero: b.hero,
+      difficulty: b.difficulty,
+      won: b.phase === 'won',
+      time: b.elapsed,
+      kills: b.kills,
+      reachedGarden: b.stage === 'garden',
+      felledGardener: b.trial === 'won',
+    })
+    this.progress = progress
+    this.rewards = rewards
+    store(progress)
+    this.lastHero = ''
   }
 
   private pauseRun = () => {
@@ -284,7 +357,8 @@ class Arena extends Phaser.Scene {
     }
     const view = b.camera()
     this.cameras.main.setScroll(view.x, view.y)
-    const shown = b.hero + this.hero + language
+    if (b.phase === 'won' || b.phase === 'lost') this.settle()
+    const shown = b.hero + this.hero + this.difficulty + this.variant + language
     if (this.lastHero !== shown) {
       this.warden.setTexture(b.hero)
       heroName.textContent = messages[language].heroes[b.hero].name
@@ -713,7 +787,7 @@ class Arena extends Phaser.Scene {
     pause.disabled = b.phase !== 'playing'
     if (b.phase === 'choosing') this.showCards()
     if (b.phase === 'playing' || b.phase === 'choosing') return
-    heroList.hidden = b.phase === 'paused'
+    for (const picker of [heroList, levelList, recordLine, variantRow]) picker.hidden = b.phase === 'paused'
     const screen = copy[b.phase]
     label.textContent = screen.label
     title.textContent = screen.title
@@ -730,6 +804,16 @@ class Arena extends Phaser.Scene {
           ? [copy.relicLine(Object.entries(b.relics).map(([id, level]) => `${copy.relics[id as RelicId].name} ${level}`).join(', '))]
           : []),
         ...(b.stage === 'garden' ? [copy.phaseLine(b.duelPhase)] : []),
+        copy.difficultyLine(copy.difficulties[b.difficulty - 1].name),
+        ...this.rewards.map(reward =>
+          reward.kind === 'difficulty'
+            ? copy.rewardDifficulty(copy.difficulties[reward.level - 1].name)
+            : reward.kind === 'hero'
+              ? copy.rewardHero(copy.heroes[reward.hero].name)
+              : reward.kind === 'variant'
+                ? copy.rewardVariant(copy.heroes[reward.hero].name, copy.relics[heroes[reward.hero].variant].name)
+                : copy.rewardRecord,
+        ),
         ...(b.phase === 'lost' ? [copy.fell[b.stage]] : []),
       ].join(' ')
       action.textContent = copy.retry

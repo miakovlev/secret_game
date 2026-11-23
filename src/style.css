@@ -165,8 +165,8 @@ h1 {
   left: 5.5%;
   top: 50%;
   transform: translateY(-50%);
-  width: min(39%, 385px);
-  padding: clamp(17px, 2.6vw, 34px);
+  width: min(44%, 450px);
+  padding: clamp(14px, 1.8vw, 24px);
   background: linear-gradient(110deg, #292229 75%, #352a32);
   border: 1px solid #585e50;
   border-top: 3px solid var(--gold);
@@ -228,10 +228,10 @@ h1 {
   color: var(--gold);
 }
 h2 {
-  font-size: clamp(30px, 3.6vw, 50px);
+  font-size: clamp(26px, 3vw, 40px);
   letter-spacing: -0.06em;
   line-height: 0.94;
-  margin: 12px 0;
+  margin: 8px 0;
 }
 p {
   font:
@@ -243,16 +243,53 @@ button {
   cursor: pointer;
   font: inherit;
 }
-.heroes {
+.levels {
   display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
   margin-top: 12px;
+}
+.levels button {
+  padding: 7px 4px;
+  font-size: 0.82rem;
+  color: inherit;
+  background: #2f2a33;
+  border: 1px solid #585e50;
+}
+.levels button[aria-checked='true'] {
+  background: #3b4638;
+  border-color: var(--gold);
+}
+.levels button:disabled,
+.heroes button:disabled {
+  opacity: 0.5;
+}
+.record {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  color: var(--muted);
+}
+.variant {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font:
+    0.82rem/1.3 system-ui,
+    sans-serif;
+  color: #cdd0c3;
+}
+.heroes {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
 }
 .heroes button {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 2px 10px;
-  padding: 8px 10px;
+  gap: 1px 10px;
+  padding: 6px 10px;
   text-align: left;
   color: inherit;
   background: #2f2a33;
@@ -280,8 +317,12 @@ button {
     sans-serif;
   color: #cdd0c3;
 }
+/* The start button stays in sight even when a small window makes the panel scroll. */
 #action {
-  margin-top: 16px;
+  position: sticky;
+  bottom: 0;
+  box-shadow: 0 0 0 8px #2b232b;
+  margin-top: 14px;
   background: var(--gold);
   border: 0;
   color: #251c15;

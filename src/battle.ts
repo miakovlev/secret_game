@@ -1,5 +1,5 @@
 import {
-  archerVolley, blessings, boarCharge, court, fireflyRule, foes, garden, gardenerRule, heroes, leveling, loadout, mothHeal, oil, relicIds,
+  archerVolley, blessings, boarCharge, court, difficulties, fireflyRule, foes, garden, gardenerRule, heroes, leveling, loadout, mothHeal, oil, relicIds,
   relicRule,
   relics, run, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
@@ -125,7 +125,7 @@ export class Battle {
   seeds: Seed[] = []
   flyTurn = 0
   sparks = 0
-  armor = MAX_ARMOR
+  armor: number
   kills = 0
   elapsed = 0
   immunity = 0
@@ -144,12 +144,29 @@ export class Battle {
 
   readonly hero: HeroId
 
-  constructor(random: () => number = Math.random, hero: HeroId = 'warden') {
+  // 1 to 3; see the difficulties table.
+  readonly difficulty: number
+  // The wave schedule as this difficulty plays it.
+  private readonly schedule: Wave[]
+
+  constructor(random: () => number = Math.random, hero: HeroId = 'warden', difficulty = 1, variant = false) {
     this.random = random
     this.hero = hero
+    this.difficulty = difficulty
     const first = heroes[hero].spell
     this.loadout = [first]
     this.spells = { [first]: { ...spells[first] } }
+    // A hero who has won before may set out with their own relic.
+    if (variant) this.relics[heroes[hero].variant] = 1
+    this.armor = this.maxArmor
+    const { early } = difficulties[difficulty - 1]
+    this.schedule = waves.map(wave => ({ ...wave, from: Math.max(0, wave.from - early) }))
+  }
+
+  // The health a foe of this kind comes in with right now.
+  private vigor(kind: FoeKind) {
+    const stats = foes[kind]
+    return (stats.health + this.elapsed * stats.healthGrowth) * difficulties[this.difficulty - 1].toughness
   }
 
   // Top-left corner of the visible part of the court: centred on the warden
@@ -165,8 +182,9 @@ export class Battle {
 
   // A group steps in side by side just beyond one edge of the visible area,
   // never inside it.
-  private spawn(kind: FoeKind, count: number) {
-    const edge = Math.floor(this.random() * 4)
+  // `flank` sends the group in from the side opposite to the given edge.
+  private spawn(kind: FoeKind, count: number, flank?: number) {
+    const edge = flank === undefined ? Math.floor(this.random() * 4) : flank ^ 1
     const pos = this.random()
     const { width, height } = court.view
     const view = this.camera()
@@ -178,7 +196,7 @@ export class Battle {
         view.x + (edge === 0 ? -14 : edge === 1 ? width + 14 : pos * width + shift),
         view.y + (edge === 2 ? -14 : edge === 3 ? height + 14 : pos * height + shift),
         stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
-        stats.health + this.elapsed * stats.healthGrowth,
+        this.vigor(kind),
       )
       // Leave room to react when the warden is patrolling an entry point.
       if (Math.hypot(foe.x - this.player.x, foe.y - this.player.y) < 150) {
@@ -187,6 +205,7 @@ export class Battle {
       }
       this.foes.push(foe)
     }
+    return edge
   }
 
   // Thorns, tusks and arrows all take one pip, with a moment of mercy after.
@@ -456,7 +475,7 @@ export class Battle {
 
   private bloom() {
     const bed = garden.beds[this.seals++ % garden.beds.length]
-    this.foes.push(makeFoe('seal', bed.x, bed.y, 0, foes.seal.health))
+    this.foes.push(makeFoe('seal', bed.x, bed.y, 0, this.vigor('seal')))
   }
 
   // The dawn bell: the waves end, and the warden carries armor and spells
@@ -476,7 +495,7 @@ export class Battle {
     // A trial not finished by dawn is over.
     if (this.trial !== 'won') this.trial = 'closed'
     this.ringing = 0
-    this.foes = [makeFoe('duchess', garden.duchess.x, garden.duchess.y, 0, foes.duchess.health)]
+    this.foes = [makeFoe('duchess', garden.duchess.x, garden.duchess.y, 0, this.vigor('duchess'))]
     this.bloom()
     events.push({ type: 'garden' })
   }
@@ -523,7 +542,7 @@ export class Battle {
           bed.x + (i - (garden.phase2.perBud - 1) / 2) * 28,
           bed.y,
           stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
-          stats.health + this.elapsed * stats.healthGrowth,
+          this.vigor('briarling'),
         ))
       }
     }
@@ -565,7 +584,7 @@ export class Battle {
     this.trial = 'fighting'
     this.ringing = 0
     const stats = foes.gardener
-    const risen = makeFoe('gardener', x, y, stats.speed, stats.health + this.elapsed * stats.healthGrowth)
+    const risen = makeFoe('gardener', x, y, stats.speed, this.vigor('gardener'))
     risen.mode = 'summon'
     risen.timer = gardenerRule.summon
     this.foes.push(risen)
@@ -592,7 +611,7 @@ export class Battle {
         foe.x + Math.cos(turn) * 52,
         foe.y + Math.sin(turn) * 52,
         stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
-        stats.health + this.elapsed * stats.healthGrowth,
+        this.vigor('briarling'),
       ))
     }
     foe.mode = 'open'
@@ -821,10 +840,12 @@ export class Battle {
     // and every group enters exactly once.
     if (this.stage === 'court') this.bell(dt, events)
     if (this.stage === 'garden') this.duel(dt, events)
-    else waves.forEach((wave, index) => {
+    else this.schedule.forEach((wave, index) => {
       const due = bursts(wave, this.elapsed)
       if (this.fired[index] < due) {
-        this.spawn(wave.kind, wave.count)
+        const edge = this.spawn(wave.kind, wave.count)
+        const { flankEvery } = difficulties[this.difficulty - 1]
+        if (flankEvery && due % flankEvery === 0) this.spawn(wave.kind, wave.count, edge)
         this.fired[index] = due
       }
     })
