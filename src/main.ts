@@ -1,10 +1,11 @@
 import Phaser from 'phaser'
 import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Phase, Shot } from './battle'
-import { archerVolley, boarCharge, court, foes, garden, loadout } from './content'
+import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout } from './content'
+import type { HeroId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture, gardenTexture,
-  oilTexture, sealTexture, wardenTexture,
+  heroTexture, oilTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -29,6 +30,8 @@ const choices = document.querySelector<HTMLElement>('#choices')!
 const slots = document.querySelector<HTMLElement>('#slots')!
 const sector = document.querySelector<HTMLElement>('#sector')!
 const clockLabel = document.querySelector<HTMLElement>('#clock-label')!
+const heroList = document.querySelector<HTMLElement>('#heroes')!
+const heroName = document.querySelector<HTMLElement>('#hero-name')!
 const directions = new Set([
   'KeyW',
   'KeyA',
@@ -80,7 +83,10 @@ function timeText(seconds: number) {
 }
 
 class Arena extends Phaser.Scene {
+  // The hero picked for the next run; a finished run keeps its own on the result screen.
+  private hero: HeroId = 'warden'
   private battle = new Battle()
+  private lastHero = ''
   private keys = new Set<string>()
   private warden!: Phaser.GameObjects.Image
   private foes: Phaser.GameObjects.Image[] = []
@@ -103,7 +109,7 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('garden', gardenTexture())
     this.textures.addCanvas('duchess', duchessTexture())
     this.textures.addCanvas('seal', sealTexture())
-    this.textures.addCanvas('warden', wardenTexture())
+    for (const id of heroIds) this.textures.addCanvas(id, heroTexture(id))
     this.textures.addCanvas('briarling', briarlingTexture())
     this.textures.addCanvas('ember', emberTexture())
     this.textures.addCanvas('boar', boarTexture())
@@ -115,11 +121,7 @@ class Arena extends Phaser.Scene {
     this.warden = this.add.image(0, 0, 'warden').setDepth(2)
     this.effects = this.add.graphics().setDepth(3)
     this.warnings = this.add.graphics().setDepth(0.7)
-    // Three still briarlings pose beside the warden on the title screen.
-    const { x, y } = this.battle.player
-    this.battle.foes = [[131, -106], [190, -56], [88, 104]].map(([dx, dy]) =>
-      makeFoe('briarling', x + dx, y + dy, 0, 1),
-    )
+    this.battle = this.titleScreen()
 
     const selectLanguage = (next: Language) => {
       language = next
@@ -129,6 +131,7 @@ class Arena extends Phaser.Scene {
       this.lastGrowth = ''
       this.lastSlots = ''
       this.lastPlace = ''
+      this.lastHero = ''
       this.renderBattle()
       this.showPhase()
     }
@@ -139,7 +142,7 @@ class Arena extends Phaser.Scene {
       if (this.battle.phase === 'paused') {
         this.battle.phase = 'playing'
       } else {
-        this.battle = new Battle()
+        this.battle = new Battle(undefined, this.hero)
         this.battle.phase = 'playing'
         this.flash = undefined
         this.pictures = []
@@ -161,6 +164,45 @@ class Arena extends Phaser.Scene {
     })
     this.renderBattle()
     action.disabled = false
+  }
+
+  // Three still briarlings pose beside the chosen hero on the title screen.
+  private titleScreen() {
+    const battle = new Battle(undefined, this.hero)
+    const { x, y } = battle.player
+    battle.foes = [[131, -106], [190, -56], [88, 104]].map(([dx, dy]) =>
+      makeFoe('briarling', x + dx, y + dy, 0, 1),
+    )
+    return battle
+  }
+
+  private pickHero(id: HeroId) {
+    this.hero = id
+    if (this.battle.phase === 'ready') this.battle = this.titleScreen()
+    this.lastHero = ''
+    this.renderBattle()
+  }
+
+  // The picker shows wherever a new run can start: the title and both result screens.
+  private showHeroes() {
+    const copy = messages[language]
+    heroList.replaceChildren(
+      ...heroIds.map(id => {
+        const button = document.createElement('button')
+        const name = document.createElement('b')
+        const spell = document.createElement('em')
+        const gift = document.createElement('span')
+        button.type = 'button'
+        button.setAttribute('role', 'radio')
+        button.setAttribute('aria-checked', String(id === this.hero))
+        name.textContent = copy.heroes[id].name
+        spell.textContent = copy.spells[heroes[id].spell].name
+        gift.textContent = copy.heroes[id].gift
+        button.append(name, spell, gift)
+        button.onclick = () => this.pickHero(id)
+        return button
+      }),
+    )
   }
 
   private pauseRun = () => {
@@ -203,7 +245,9 @@ class Arena extends Phaser.Scene {
       for (const effect of this.pictures) effect.life -= dt
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
-        const span = { pickup: 0.25, heal: 0.45, slash: 0.16, toll: 0.32, lash: 0.24 }[event.type as string]
+        const span = {
+          pickup: 0.25, heal: 0.45, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+        }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
       remaining -= dt
@@ -228,6 +272,13 @@ class Arena extends Phaser.Scene {
     }
     const view = b.camera()
     this.cameras.main.setScroll(view.x, view.y)
+    const shown = b.hero + this.hero + language
+    if (this.lastHero !== shown) {
+      this.warden.setTexture(b.hero)
+      heroName.textContent = messages[language].heroes[b.hero].name
+      this.showHeroes()
+      this.lastHero = shown
+    }
     this.warden.setPosition(b.player.x, b.player.y).setRotation(b.facing)
     this.warden.setAlpha(
       b.immunity > 0 && Math.floor(b.immunity * 12) % 2 ? 0.45 : 1,
@@ -288,6 +339,14 @@ class Arena extends Phaser.Scene {
         )
       }
     })
+    // Fire seeds wait on the ground; firefly spirits ride their ring.
+    for (const seed of b.seeds) {
+      const glow = 0.5 + 0.5 * Math.sin(b.elapsed * 8 + seed.x)
+      w.fillStyle(0xff8a3c, 0.25 + 0.2 * glow)
+      w.fillCircle(seed.x, seed.y, 9)
+      w.fillStyle(0xffd27a, 1)
+      w.fillCircle(seed.x, seed.y, 3.5)
+    }
     const lady = b.stage === 'garden' ? b.duchess : undefined
     if (lady) {
       const pulse = 0.5 + 0.5 * Math.sin(b.elapsed * 9)
@@ -333,6 +392,20 @@ class Arena extends Phaser.Scene {
           .setScale(1 + 0.12 * Math.sin(b.elapsed * 6 + ember.x))
     })
     const g = this.effects.clear()
+    const flies = b.spells.fireflies
+    if (flies) {
+      g.lineStyle(1, 0xd8f59a, 0.12)
+      g.strokeCircle(b.player.x, b.player.y, flies.range)
+      for (let i = 0; i < fireflyRule.count; i++) {
+        const turn = b.flyTurn + (i * 2 * Math.PI) / fireflyRule.count
+        const x = b.player.x + Math.cos(turn) * flies.range
+        const y = b.player.y + Math.sin(turn) * flies.range
+        g.fillStyle(0xd8f59a, 0.3)
+        g.fillCircle(x, y, 10)
+        g.fillStyle(0xf6ffd6, 1)
+        g.fillCircle(x, y, 4)
+      }
+    }
     g.lineStyle(2, 0xf3ead2, 1)
     for (const arrow of b.arrows) {
       g.lineBetween(arrow.x - arrow.vx * 0.05, arrow.y - arrow.vy * 0.05, arrow.x, arrow.y)
@@ -342,6 +415,19 @@ class Arena extends Phaser.Scene {
       if (event.type === 'pickup') {
         g.lineStyle(1.5, 0xffc46b, fade)
         g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 14)
+      } else if (event.type === 'chain') {
+        g.lineStyle(2.5, 0xffdb93, fade)
+        g.lineBetween(event.from.x, event.from.y, event.to.x, event.to.y)
+        g.strokeCircle(event.to.x, event.to.y, 5 + (1 - fade) * 8)
+      } else if (event.type === 'burst') {
+        const radius = event.radius * (0.4 + 0.6 * (1 - fade))
+        g.fillStyle(0xff8a3c, 0.3 * fade)
+        g.fillCircle(event.at.x, event.at.y, radius)
+        g.lineStyle(3, 0xffd27a, fade)
+        g.strokeCircle(event.at.x, event.at.y, radius)
+      } else if (event.type === 'sting') {
+        g.lineStyle(2, 0xd8f59a, fade)
+        g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 10)
       } else if (event.type === 'heal') {
         g.lineStyle(2.5, 0xa9efd9, fade)
         g.strokeCircle(b.player.x, b.player.y, 20 + (1 - fade) * 18)
@@ -477,6 +563,7 @@ class Arena extends Phaser.Scene {
     pause.disabled = b.phase !== 'playing'
     if (b.phase === 'choosing') this.showCards()
     if (b.phase === 'playing' || b.phase === 'choosing') return
+    heroList.hidden = b.phase === 'paused'
     const screen = copy[b.phase]
     label.textContent = screen.label
     title.textContent = screen.title
@@ -487,6 +574,7 @@ class Arena extends Phaser.Scene {
       message.textContent = [
         copy.result(timeText(Math.floor(b.elapsed)), b.kills, b.level),
         copy.build(b.loadout.map(id => copy.spells[id].name).join(', ')),
+        copy.heroLine(copy.heroes[b.hero].name),
         ...(b.phase === 'lost' ? [copy.fell[b.stage]] : []),
       ].join(' ')
       action.textContent = copy.retry

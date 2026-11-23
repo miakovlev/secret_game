@@ -1,8 +1,8 @@
 import {
-  archerVolley, boarCharge, court, foes, garden, leveling, loadout, oil, run, shownValue, spellIds, spells,
-  upgraded, upgradeIds, upgrades, waves,
+  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, leveling, loadout, oil, run, seedRule,
+  shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
-import type { FoeKind, SpellId, Stats, UpgradeId, Wave } from './content.ts'
+import type { FoeKind, HeroId, SpellId, Stats, UpgradeId, Wave } from './content.ts'
 
 // Positions and speeds are expressed in arena pixels and seconds.
 export const DURATION = run.duration
@@ -21,8 +21,11 @@ export type Foe = Point & {
   timer: number
   dir: Point
   shots: number
+  // Seconds until a firefly spirit may sting this foe again.
+  stung: number
 }
 export type Arrow = Point & { vx: number; vy: number; life: number }
+export type Seed = Point & { life: number }
 export type Ember = Point & { value: number }
 export type Shot = { from: Point; to: Point }
 // Everything that happened during one step, in order, for the scene to show.
@@ -34,6 +37,10 @@ export type BattleEvent =
   | { type: 'pickup'; at: Point }
   | { type: 'heal'; at: Point }
   | { type: 'arrow'; at: Point }
+  | ({ type: 'chain' } & Shot)
+  | { type: 'sow'; at: Point }
+  | { type: 'burst'; at: Point; radius: number }
+  | { type: 'sting'; at: Point }
   | { type: 'garden' }
   | { type: 'crown'; open: boolean }
   | { type: 'lash'; at: Point; facing: number; range: number; arc: number }
@@ -52,7 +59,7 @@ export function xpGoal(level: number) {
 }
 
 export function makeFoe(kind: FoeKind, x: number, y: number, speed: number, health: number): Foe {
-  return { kind, x, y, speed, health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0 }
+  return { kind, x, y, speed, health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0 }
 }
 
 // How many times the wave's group has been due by the given second of the run.
@@ -78,9 +85,13 @@ export class Battle {
   pending = 0
   offer: Choice[] = []
   // Learned spells in slot order, their current stats and seconds until the next cast.
-  loadout: SpellId[] = [loadout.start]
-  spells: Partial<Record<SpellId, Stats>> = { [loadout.start]: { ...spells[loadout.start] } }
-  timers: Record<SpellId, number> = { witchfire: 0, moonblade: 0, toll: 0 }
+  loadout: SpellId[]
+  spells: Partial<Record<SpellId, Stats>>
+  timers: Record<SpellId, number> = { witchfire: 0, moonblade: 0, toll: 0, seeds: 0, fireflies: 0 }
+  // Fire seeds lying in wait, the turn of the firefly ring, and witchfire sparks cast so far.
+  seeds: Seed[] = []
+  flyTurn = 0
+  sparks = 0
   armor = MAX_ARMOR
   kills = 0
   elapsed = 0
@@ -95,8 +106,14 @@ export class Battle {
 
   private readonly random: () => number
 
-  constructor(random: () => number = Math.random) {
+  readonly hero: HeroId
+
+  constructor(random: () => number = Math.random, hero: HeroId = 'warden') {
     this.random = random
+    this.hero = hero
+    const first = heroes[hero].spell
+    this.loadout = [first]
+    this.spells = { [first]: { ...spells[first] } }
   }
 
   // Top-left corner of the visible part of the court: centred on the warden
@@ -228,14 +245,16 @@ export class Battle {
     })
   }
 
-  // Unlearned spells come first while a slot is free; random upgrades of
-  // learned spells fill the remaining cards.
+  // While a slot is free a few random unlearned spells lead the cards;
+  // random upgrades of learned spells fill the rest.
   private deal() {
     const free = this.loadout.length < loadout.slots
-    const cards: Choice[] = spellIds
-      .filter(spell => free && !this.spells[spell])
-      .slice(0, loadout.cards)
-      .map(spell => ({ kind: 'learn', spell }))
+    const unknown = spellIds.filter(spell => !this.spells[spell])
+    const cards: Choice[] = []
+    while (free && unknown.length && cards.length < loadout.learnCards) {
+      const [spell] = unknown.splice(Math.floor(this.random() * unknown.length), 1)
+      cards.push({ kind: 'learn', spell })
+    }
     const pool = upgradeIds.filter(id => this.spells[upgrades[id].spell])
     while (cards.length < loadout.cards && pool.length) {
       const [id] = pool.splice(Math.floor(this.random() * pool.length), 1)
@@ -299,6 +318,7 @@ export class Battle {
     this.embers = []
     this.oils = []
     this.arrows = []
+    this.seeds = []
     this.foes = [makeFoe('duchess', garden.duchess.x, garden.duchess.y, 0, foes.duchess.health)]
     this.bloom()
     events.push({ type: 'garden' })
@@ -335,18 +355,78 @@ export class Battle {
     this.lash = { timer: lash.every, warned: false, facing: 0 }
   }
 
+  // Foes a spell may hit: a shielded Duchess cannot be hurt or even aimed at.
+  private targets() {
+    const guarded = this.shielded
+    return this.foes.filter(foe => foe.kind !== 'duchess' || !guarded)
+  }
+
+  private strike(foe: Foe, damage: number, events: BattleEvent[]) {
+    foe.health -= damage
+    if (foe.health > 0) return
+    const fallen = { x: foe.x, y: foe.y }
+    this.foes.splice(this.foes.indexOf(foe), 1)
+    this.kills++
+    events.push({ type: 'kill', at: fallen })
+    if (foe.kind === 'duchess') {
+      this.phase = 'won'
+    } else if (foe.kind === 'seal') {
+      // The crown opens and any lash already raised is dropped.
+      this.crownOpen = garden.window
+      this.lash = { timer: garden.lash.every, warned: false, facing: 0 }
+      events.push({ type: 'crown', open: true })
+    } else {
+      this.embers.push({ ...fallen, value: foes[foe.kind].ember })
+      if (this.random() < oil.chance) this.oils.push(fallen)
+    }
+  }
+
+  // Seeds on the ground burst under the first foe to reach them.
+  private burst(stats: Stats, dt: number, events: BattleEvent[]) {
+    this.seeds = this.seeds.filter(seed => {
+      seed.life -= dt
+      const near = (reach: number) =>
+        this.targets().filter(foe => Math.hypot(foe.x - seed.x, foe.y - seed.y) < reach)
+      if (!near(seedRule.trigger).length) return seed.life > 0
+      events.push({ type: 'burst', at: { x: seed.x, y: seed.y }, radius: stats.range })
+      for (const foe of near(stats.range)) this.strike(foe, stats.damage, events)
+      return false
+    })
+  }
+
+  // The firefly ring turns all the time and stings whatever it crosses.
+  private swarm(stats: Stats, dt: number, events: BattleEvent[]) {
+    this.flyTurn += (stats.spin * Math.PI * dt) / 180
+    for (let i = 0; i < fireflyRule.count; i++) {
+      const turn = this.flyTurn + (i * 2 * Math.PI) / fireflyRule.count
+      const x = this.player.x + Math.cos(turn) * stats.range
+      const y = this.player.y + Math.sin(turn) * stats.range
+      for (const foe of this.targets()) {
+        if (foe.stung > 0 || Math.hypot(foe.x - x, foe.y - y) >= fireflyRule.hit) continue
+        foe.stung = stats.cooldown
+        events.push({ type: 'sting', at: { x: foe.x, y: foe.y } })
+        this.strike(foe, stats.damage, events)
+      }
+    }
+  }
+
   // Each learned spell keeps its own cooldown and casts as soon as it is ready.
-  private cast(dt: number, events: BattleEvent[]) {
+  private cast(dt: number, moving: boolean, events: BattleEvent[]) {
     const at = { ...this.player }
+    const gift = heroes[this.hero]
     const reach = (foe: Foe) => Math.hypot(foe.x - at.x, foe.y - at.y)
+    for (const foe of this.foes) foe.stung = Math.max(0, foe.stung - dt)
     for (const id of this.loadout) {
       const stats = this.spells[id]!
+      if (id === 'seeds') this.burst(stats, dt, events)
+      if (id === 'fireflies') {
+        this.swarm(stats, dt, events)
+        continue
+      }
       this.timers[id] = Math.max(0, this.timers[id] - dt)
       if (this.timers[id] > 0) continue
-      // A shielded Duchess cannot be hurt or even aimed at.
-      const guarded = this.shielded
-      const open = this.foes.filter(foe => foe.kind !== 'duchess' || !guarded)
-      let struck: Foe[]
+      const open = this.targets()
+      let struck: Foe[] = []
       if (id === 'witchfire') {
         // Witchfire waits for a target instead of wasting the spark.
         let target: Foe | undefined
@@ -358,8 +438,21 @@ export class Battle {
           }
         }
         if (!target) continue
-        struck = [target]
-        events.push({ type: 'shot', from: at, to: { x: target.x, y: target.y } })
+        const hit = target
+        struck = [hit]
+        events.push({ type: 'shot', from: at, to: { x: hit.x, y: hit.y } })
+        // The warden's gift: every few sparks one leaps on to a neighbour.
+        this.sparks++
+        if (gift.chain && this.sparks % gift.chain === 0) {
+          const far = (foe: Foe) => Math.hypot(foe.x - hit.x, foe.y - hit.y)
+          const next = open
+            .filter(foe => foe !== hit && far(foe) < gift.chainRange)
+            .sort((a, b) => far(a) - far(b))[0]
+          if (next) {
+            struck.push(next)
+            events.push({ type: 'chain', from: { x: hit.x, y: hit.y }, to: { x: next.x, y: next.y } })
+          }
+        }
       } else if (id === 'moonblade') {
         const arc = (stats.arc * Math.PI) / 180
         struck = open.filter(foe => {
@@ -368,39 +461,25 @@ export class Battle {
           return reach(foe) < stats.range && aside <= arc
         })
         events.push({ type: 'slash', at, facing: this.facing, range: stats.range, arc })
-      } else {
+      } else if (id === 'toll') {
         struck = open.filter(foe => reach(foe) < stats.range)
         events.push({ type: 'toll', at, radius: stats.range })
         for (const foe of struck) {
           // Rooted things take the blow but stay where they are.
           if (!foes[foe.kind].speed) continue
           const distance = reach(foe) || 1
-          foe.x += ((foe.x - at.x) / distance) * stats.knockback
-          foe.y += ((foe.y - at.y) / distance) * stats.knockback
+          const push = stats.knockback * gift.knockback
+          foe.x += ((foe.x - at.x) / distance) * push
+          foe.y += ((foe.y - at.y) / distance) * push
         }
+      } else {
+        // Fire seeds fall only on the path of a hero who is moving.
+        if (!moving) continue
+        this.seeds.push({ ...at, life: seedRule.life })
+        events.push({ type: 'sow', at })
       }
       this.timers[id] = stats.cooldown
-      for (const foe of struck) {
-        foe.health -= stats.damage
-        if (foe.health > 0) continue
-        const fallen = { x: foe.x, y: foe.y }
-        this.foes.splice(this.foes.indexOf(foe), 1)
-        this.kills++
-        events.push({ type: 'kill', at: fallen })
-        if (foe.kind === 'duchess') {
-          this.phase = 'won'
-          return
-        }
-        if (foe.kind === 'seal') {
-          // The crown opens and any lash already raised is dropped.
-          this.crownOpen = garden.window
-          this.lash = { timer: garden.lash.every, warned: false, facing: 0 }
-          events.push({ type: 'crown', open: true })
-          continue
-        }
-        this.embers.push({ ...fallen, value: foes[foe.kind].ember })
-        if (this.random() < oil.chance) this.oils.push(fallen)
-      }
+      for (const foe of struck) this.strike(foe, stats.damage, events)
     }
   }
 
@@ -418,11 +497,11 @@ export class Battle {
       this.facing = Math.atan2(dy, dx)
       this.player.x = Math.max(
         22,
-        Math.min(area.width - 22, this.player.x + (160 * dt * dx) / length),
+        Math.min(area.width - 22, this.player.x + (heroes[this.hero].speed * dt * dx) / length),
       )
       this.player.y = Math.max(
         22,
-        Math.min(area.height - 22, this.player.y + (160 * dt * dy) / length),
+        Math.min(area.height - 22, this.player.y + (heroes[this.hero].speed * dt * dy) / length),
       )
     }
     this.collect(events)
@@ -473,7 +552,7 @@ export class Battle {
     })
     if ((this.phase as Phase) === 'lost') return events
 
-    this.cast(dt, events)
+    this.cast(dt, length > 0, events)
     return events
   }
 }

@@ -43,7 +43,8 @@
           <div class="panel" id="panel" role="region" aria-labelledby="title">
             <span class="eyebrow" id="panel-label">THE FIRST VIGIL</span>
             <h2 id="title">Until first light</h2>
-            <p id="message">Hold the chapel court for five minutes, until the dawn bell opens the throne garden. Gather embers to learn spells and step out of the lanes that foes mark before they strike. In the garden, break the seal-flower to open the Duchess’s crown, then strike her.</p>
+            <p id="message">Hold the court for five minutes, then break the seal-flower in the throne garden and strike the Duchess while her crown is open.</p>
+            <div class="heroes" id="heroes" role="radiogroup" data-label="heroLabel" aria-label="Who keeps the watch"></div>
             <button id="action" disabled>Loading arena…</button>
           </div>
           <div class="panel cards" id="cards" role="region" aria-labelledby="cards-title" hidden>
@@ -61,7 +62,7 @@
         </div>
       </section>
       <footer>
-        <span><i class="warden-dot"></i><span data-copy="warden">Dawn Warden</span></span>
+        <span><i class="warden-dot"></i><span id="hero-name">Dawn Warden</span></span>
         <span><i class="briarling-dot"></i><span data-copy="briarling">Briarling</span></span>
         <span><i class="boar-dot"></i><span data-copy="boar">Thorn Boar</span></span>
         <span><i class="archer-dot"></i><span data-copy="archer">Court Archer</span></span>

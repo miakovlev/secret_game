@@ -155,8 +155,9 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
   // The learned spell is no longer offered; its place goes to another upgrade.
   await expect(page.getByRole('heading', { name: 'Уровень 3' })).toBeVisible()
   await expect(cards.nth(0)).toContainText('Лунный клинок')
-  await expect(cards.nth(1)).toContainText('Дальность 145 → 175')
-  await expect(cards.nth(2)).toContainText('Вспышек в секунду 5.3 → 6.2')
+  await expect(cards.nth(1)).toContainText('Огненные семена')
+  await expect(cards.nth(1)).toContainText('Новое заклинание')
+  await expect(cards.nth(2)).toContainText('Дальность 145 → 175')
   await page.keyboard.press('Digit1')
   await expect(page.locator('#cards')).toBeHidden()
   await expect(slots).toHaveText(['Ведьмин огонь', 'Погребальный звон', 'Лунный клинок'])
@@ -195,6 +196,71 @@ async function playRun(page: Page, patrol: boolean, limit: number) {
   if (held) await page.keyboard.up(held)
   return picks
 }
+
+test('the hero picked on the title screen sets the starting spell, and can be changed between runs', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await frozenClock(page)
+  await expect(page.getByRole('radiogroup', { name: 'Who keeps the watch' })).toBeVisible()
+  const heroes = page.locator('#heroes').getByRole('radio')
+  const slots = page.locator('#slots [role=listitem]')
+  const hero = () => page.evaluate(() => (window as any).arena.battle.hero)
+  await expect(heroes).toHaveCount(3)
+  await expect(heroes.nth(0)).toContainText('Dawn Warden')
+  await expect(heroes.nth(0)).toContainText('Witchfire')
+  await expect(heroes.nth(0)).toHaveAttribute('aria-checked', 'true')
+  await expect(slots).toHaveText(['Witchfire', '—', '—'])
+
+  // Picking the duelist changes the title screen straight away.
+  await heroes.nth(1).click()
+  await expect(heroes.nth(1)).toHaveAttribute('aria-checked', 'true')
+  await expect(heroes.nth(0)).toHaveAttribute('aria-checked', 'false')
+  await expect(heroes.nth(1)).toContainText('Moves faster')
+  await expect(slots).toHaveText(['Moon Blade', '—', '—'])
+  await expect(page.locator('#hero-name')).toHaveText('Duelist')
+  await select(page, 'ru')
+  await expect(page.getByRole('radiogroup', { name: 'Кто несёт дозор' })).toBeVisible()
+  await expect(heroes.nth(1)).toContainText('Дуэлянт')
+  await expect(heroes.nth(1)).toContainText('Лунный клинок')
+  await expect(heroes.nth(1)).toHaveAttribute('aria-checked', 'true')
+  await expect(page.locator('#hero-name')).toHaveText('Дуэлянт')
+  await select(page, 'en')
+
+  // The duelist starts with the blade and covers more ground than the warden would.
+  await page.getByRole('button', { name: 'Start run' }).click()
+  expect(await hero()).toBe('duelist')
+  const x = () => page.evaluate(() => (window as any).arena.battle.player.x)
+  const from = await x()
+  await page.keyboard.down('ArrowRight')
+  await page.clock.runFor(1000)
+  await page.keyboard.up('ArrowRight')
+  expect((await x()) - from).toBeGreaterThan(175)
+  await expect(slots).toHaveText(['Moon Blade', '—', '—'])
+
+  // The picker is hidden on pause and comes back on the result screen.
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible()
+  await expect(page.locator('#heroes')).toBeHidden()
+  await page.keyboard.press('Escape')
+  await page.evaluate(() => { (window as any).arena.battle.armor = 1 })
+  await playRun(page, false, 150_000)
+  await expect(page.locator('#title')).toHaveText('The briars prevail')
+  await expect(page.locator('#message')).toContainText('Spells: Moon Blade')
+  await expect(page.locator('#message')).toContainText('Hero: Duelist.')
+  await expect(page.locator('#heroes')).toBeVisible()
+
+  // Picking another hero there keeps the report and applies to the next run only.
+  await heroes.nth(2).click()
+  await expect(heroes.nth(2)).toHaveAttribute('aria-checked', 'true')
+  await expect(page.locator('#message')).toContainText('Hero: Duelist.')
+  expect(await hero()).toBe('duelist')
+  await page.getByRole('button', { name: 'Play again' }).click()
+  expect(await hero()).toBe('ringer')
+  await expect(slots).toHaveText(['Funeral Toll', '—', '—'])
+  await expect(page.locator('#hero-name')).toHaveText('Bellringer')
+  expect(await page.evaluate(() => (window as any).arena.battle.sparks)).toBe(0)
+  expect(errors).toEqual([])
+})
 
 test('boars and archers join the later waves and mark their attacks', async ({ page }) => {
   const errors: string[] = []

@@ -1,4 +1,5 @@
 import { court, garden } from './content'
+import type { HeroId } from './content'
 
 type Pen = CanvasRenderingContext2D
 
@@ -197,17 +198,45 @@ export function floorTexture() {
   })
 }
 
-export function wardenTexture() {
+// Heroes share one figure: swept cloak, hood and a thing held in the leading hand.
+const heroLooks: Record<HeroId, { cloak: string; fold: string; hood: string; held: (p: Pen) => void }> = {
+  warden: {
+    cloak: '#3e7871', fold: '#78b3a1', hood: '#aacbb3',
+    // A lit lantern.
+    held: p => {
+      box(p,4,7,12,2,'#c9a977')
+      polygon(p, [[15,3],[19,7],[16,13],[12,8]], '#fce7a6')
+    },
+  },
+  duelist: {
+    cloak: '#46557e', fold: '#8799c9', hood: '#c9d3ee',
+    // A long pale blade.
+    held: p => {
+      box(p,3,6,7,3,'#c9a977')
+      polygon(p, [[9,5],[24,7],[9,10]], '#eef2ff')
+    },
+  },
+  ringer: {
+    cloak: '#7a5636', fold: '#b98d5a', hood: '#e2c79a',
+    // A handbell.
+    held: p => {
+      box(p,4,7,8,2,'#6b4a2c')
+      polygon(p, [[11,4],[17,2],[20,8],[17,14],[11,12]], '#e7bd78')
+      circle(p,19,8,2,'#fce7a6')
+    },
+  },
+}
+
+export function heroTexture(id: HeroId) {
+  const look = heroLooks[id]
   return texture(50, 50, p => {
     p.translate(25,25)
     circle(p,-2,2,15,'#221f2b')
-    // Swept cloak, hood, and a lit lantern on the leading hand.
-    polygon(p, [[9,0],[-2,-11],[-18,-13],[-13,-2],[-19,12],[-3,9]], '#3e7871')
-    polygon(p, [[4,1],[-9,6],[-19,12],[-11,0]], '#78b3a1')
-    polygon(p, [[-6,-7],[2,-9],[9,-5],[11,1],[4,7],[-5,6]], '#aacbb3')
+    polygon(p, [[9,0],[-2,-11],[-18,-13],[-13,-2],[-19,12],[-3,9]], look.cloak)
+    polygon(p, [[4,1],[-9,6],[-19,12],[-11,0]], look.fold)
+    polygon(p, [[-6,-7],[2,-9],[9,-5],[11,1],[4,7],[-5,6]], look.hood)
     polygon(p, [[4,-5],[10,-2],[9,3],[5,3]], '#51414c')
-    box(p,4,7,12,2,'#c9a977')
-    polygon(p, [[15,3],[19,7],[16,13],[12,8]], '#fce7a6')
+    look.held(p)
   })
 }
 

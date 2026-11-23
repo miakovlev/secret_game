@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archerVolley, boarCharge, court, foes, garden, loadout, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
+import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, seedRule, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
 const briarling = foes.briarling
@@ -336,20 +336,27 @@ test('a level-up freezes foes, the clock and the cooldowns until a card is chose
   assert.notEqual(JSON.stringify(b), before)
 })
 
-test('the first cards offer both new spells and one upgrade of the known spell', () => {
-  const b = playing(() => 0.5)
-  assert.deepEqual(b.loadout, ['witchfire'])
-  levelUp(b)
-  assert.deepEqual(b.offer.slice(0, 2), [
-    { kind: 'learn', spell: 'moonblade' },
-    { kind: 'learn', spell: 'toll' },
-  ])
-  assert.equal(b.offer.length, loadout.cards)
-  const card = b.offer[2]
-  assert.equal(card.kind, 'upgrade')
-  assert.equal(card.spell, 'witchfire')
-  assert.equal(card.from, shownValue(witchfire, card.id))
-  assert.equal(card.to, shownValue(upgraded(witchfire, card.id), card.id))
+test('the first cards offer two different new spells and one upgrade of the known spell', () => {
+  const seen = new Set()
+  for (const roll of [0, 0.3, 0.5, 0.8, 0.99]) {
+    const b = playing(() => roll)
+    assert.deepEqual(b.loadout, ['witchfire'])
+    levelUp(b)
+    assert.equal(b.offer.length, loadout.cards)
+    const [first, second, card] = b.offer
+    assert.deepEqual([first.kind, second.kind, card.kind], ['learn', 'learn', 'upgrade'])
+    assert.equal(loadout.learnCards, 2)
+    assert.notEqual(first.spell, second.spell)
+    for (const learn of [first, second]) {
+      assert.ok(learn.spell !== 'witchfire' && learn.spell in spells)
+      seen.add(learn.spell)
+    }
+    assert.equal(card.spell, 'witchfire')
+    assert.equal(card.from, shownValue(witchfire, card.id))
+    assert.equal(card.to, shownValue(upgraded(witchfire, card.id), card.id))
+  }
+  // Different rolls bring every other spell to the table sooner or later.
+  assert.deepEqual([...seen].sort(), ['fireflies', 'moonblade', 'seeds', 'toll'])
 })
 
 test('one choice applies exactly once and learned spells fill the slots in order', () => {
@@ -359,20 +366,23 @@ test('one choice applies exactly once and learned spells fill the slots in order
   levelUp(b)
   b.choose(7)
   assert.equal(b.phase, 'choosing')
+  const learned = b.offer[1].spell
   b.choose(1)
   b.choose(1)
   assert.equal(b.phase, 'playing')
-  assert.deepEqual(b.loadout, ['witchfire', 'toll'])
-  assert.deepEqual(b.spells.toll, spells.toll)
-  assert.notEqual(b.spells.toll, spells.toll)
+  assert.deepEqual(b.loadout, ['witchfire', learned])
+  assert.deepEqual(b.spells[learned], spells[learned])
+  assert.notEqual(b.spells[learned], spells[learned])
 
+  // The learned spell is not offered again; its upgrades now are.
   levelUp(b)
-  assert.deepEqual(b.offer[0], { kind: 'learn', spell: 'moonblade' })
-  const card = b.offer[1]
+  assert.ok(b.offer.every(card => card.kind !== 'learn' || card.spell !== learned))
+  const index = b.offer.findIndex(card => card.kind === 'upgrade')
+  const card = b.offer[index]
   const before = { ...b.spells[card.spell] }
-  b.choose(1)
+  b.choose(index)
   assert.deepEqual(b.spells[card.spell], upgraded(before, card.id))
-  assert.deepEqual(b.loadout, ['witchfire', 'toll'])
+  assert.deepEqual(b.loadout, ['witchfire', learned])
 })
 
 test('two levels at once give two sets of cards in a row', () => {
@@ -380,14 +390,17 @@ test('two levels at once give two sets of cards in a row', () => {
   levelUp(b, 2)
   assert.equal(b.level, 3)
   assert.equal(b.choiceLevel, 2)
+  const first = b.offer[0].spell
   b.choose(0)
   assert.equal(b.phase, 'choosing')
   assert.equal(b.choiceLevel, 3)
-  assert.deepEqual(b.offer[0], { kind: 'learn', spell: 'toll' })
   assert.equal(b.offer.length, loadout.cards)
+  assert.equal(b.offer[0].kind, 'learn')
+  const second = b.offer[0].spell
+  assert.notEqual(second, first)
   b.choose(0)
   assert.equal(b.phase, 'playing')
-  assert.deepEqual(b.loadout, ['witchfire', 'moonblade', 'toll'])
+  assert.deepEqual(b.loadout, ['witchfire', first, second])
 })
 
 test('with every slot taken the cards are distinct upgrades of learned spells', () => {
@@ -946,4 +959,230 @@ test('touching the Duchess wounds like any other foe', () => {
   b.player = { x: lady.x, y: lady.y + foes.duchess.reach - 4 }
   advance(b, 2)
   assert.equal(b.armor, MAX_ARMOR - 1)
+})
+
+// --- Step 3.1: heroes, fire seeds and firefly spirits.
+
+function hero(id, random = () => 0.5) {
+  const b = new Battle(random, id)
+  b.phase = 'playing'
+  return b
+}
+
+test('each hero starts with their own spell and a new run forgets the last hero', () => {
+  assert.deepEqual(heroIds, ['warden', 'duelist', 'ringer'])
+  assert.equal(new Battle().hero, 'warden')
+  for (const id of heroIds) {
+    const b = hero(id)
+    assert.equal(b.hero, id)
+    assert.deepEqual(b.loadout, [heroes[id].spell])
+    assert.deepEqual(b.spells, { [heroes[id].spell]: spells[heroes[id].spell] })
+    assert.equal(b.sparks, 0)
+    // The starting spell is never offered as a new one.
+    levelUp(b)
+    assert.ok(b.offer.every(card => card.kind !== 'learn' || card.spell !== heroes[id].spell))
+  }
+  assert.deepEqual(heroIds.map(id => heroes[id].spell), ['witchfire', 'moonblade', 'toll'])
+})
+
+test('the duelist moves faster than the others', () => {
+  const walked = id => {
+    const b = hero(id)
+    const start = b.player.x
+    advance(b, 60, 1, 0)
+    return b.player.x - start
+  }
+  assert.ok(Math.abs(walked('warden') - heroes.warden.speed) < 1e-8)
+  assert.ok(Math.abs(walked('duelist') - heroes.duelist.speed) < 1e-8)
+  assert.ok(walked('duelist') > walked('warden'))
+  assert.equal(walked('ringer'), walked('warden'))
+})
+
+test('the bellringer pushes foes farther with the same toll', () => {
+  const pushed = id => {
+    const b = hero(id)
+    if (id !== 'ringer') learn(b, 'toll')
+    for (const spell of b.loadout) if (spell !== 'toll') b.spells[spell].range = 0
+    const foe = dummy(b, 40)
+    b.step(0, 0, 0)
+    return foe.x - b.player.x - 40
+  }
+  assert.equal(pushed('warden'), spells.toll.knockback)
+  assert.equal(pushed('duelist'), spells.toll.knockback)
+  assert.equal(pushed('ringer'), spells.toll.knockback * heroes.ringer.knockback)
+  assert.ok(heroes.ringer.knockback > 1)
+})
+
+test('every third spark of the warden leaps to the nearest neighbour in reach', () => {
+  const volley = (id, neighbour) => {
+    const b = hero(id)
+    if (id !== 'warden') {
+      learn(b, 'witchfire')
+      b.spells[heroes[id].spell].range = 0
+    }
+    const target = dummy(b, 50)
+    const near = dummy(b, 50 + neighbour)
+    const far = dummy(b, 50, heroes.warden.chainRange + 30)
+    const events = []
+    for (let spark = 0; spark < 6; spark++) {
+      b.timers.witchfire = 0
+      events.push(b.step(0, 0, 0).map(event => event.type).filter(type => type === 'shot' || type === 'chain'))
+    }
+    return { events, hits: [target, near, far].map(hurt), b, target, near }
+  }
+  const { events, hits, b, target, near } = volley('warden', 60)
+  assert.deepEqual(events, [['shot'], ['shot'], ['shot', 'chain'], ['shot'], ['shot'], ['shot', 'chain']])
+  assert.deepEqual(hits, [6 * witchfire.damage, 2 * witchfire.damage, 0])
+  b.timers.witchfire = 0
+  b.sparks = 2
+  const leap = b.step(0, 0, 0).find(event => event.type === 'chain')
+  assert.deepEqual(leap, { type: 'chain', from: { x: target.x, y: target.y }, to: { x: near.x, y: near.y } })
+
+  // Nobody close enough: the spark just lands.
+  assert.deepEqual(volley('warden', heroes.warden.chainRange + 10).hits, [6 * witchfire.damage, 0, 0])
+  // The gift belongs to the warden, not to the spell.
+  for (const other of ['duelist', 'ringer']) {
+    const plain = volley(other, 60)
+    assert.ok(plain.events.every(types => types.join() === 'shot'))
+    assert.deepEqual(plain.hits, [6 * witchfire.damage, 0, 0])
+  }
+})
+
+test('fire seeds fall behind a moving hero and burst under the first foe to reach one', () => {
+  const b = hero('warden')
+  b.spells.witchfire.range = 0
+  learn(b, 'seeds')
+  const { cooldown, damage, range } = spells.seeds
+
+  // Standing still sows nothing. Briarlings of the first wave are waved away.
+  for (let i = 0; i < 90; i++) {
+    b.step(1 / 60, 0, 0)
+    b.foes = []
+  }
+  assert.deepEqual(b.seeds, [])
+  const sown = []
+  const start = { ...b.player }
+  for (let i = 0; i < 120; i++) {
+    sown.push(...b.step(1 / 60, 1, 0).filter(event => event.type === 'sow'))
+    b.foes = []
+  }
+  assert.ok(Math.abs(sown.length - 2 / cooldown) <= 1)
+  assert.equal(b.seeds.length, sown.length)
+  // The first seed lies where the hero set off; the others trail along the path.
+  assert.ok(Math.abs(b.seeds[0].x - start.x) < 4)
+  assert.equal(b.seeds[0].y, start.y)
+  assert.ok(b.seeds.at(-1).x > b.seeds[0].x + 100)
+
+  // A foe well away from every seed sets nothing off.
+  const seed = b.seeds[0]
+  const count = b.seeds.length
+  const bystander = dummy(b, 0, 200)
+  advance(b, 2)
+  assert.equal(b.seeds.length, count)
+  assert.equal(hurt(bystander), 0)
+
+  // One foe touches the seed; everything inside the blast burns, the rest does not.
+  const walker = makeFoe('briarling', seed.x - seedRule.trigger + 4, seed.y, 0, 1e9)
+  const inside = makeFoe('briarling', seed.x, seed.y - range + 6, 0, 1e9)
+  const outside = makeFoe('briarling', seed.x - range - 12, seed.y, 0, 1e9)
+  b.foes.push(walker, inside, outside)
+  const events = b.step(1 / 60, 0, 0)
+  assert.deepEqual(events, [{ type: 'burst', at: { x: seed.x, y: seed.y }, radius: range }])
+  assert.deepEqual([walker, inside, outside].map(hurt), [damage, damage, 0])
+  assert.equal(b.seeds.length, count - 1)
+  assert.ok(!b.seeds.includes(seed))
+
+  // A seed nobody reaches withers after a while.
+  for (let i = 0; i < Math.round(seedRule.life * 60); i++) {
+    b.step(1 / 60, 0, 0)
+    b.foes = []
+  }
+  assert.deepEqual(b.seeds, [])
+})
+
+test('a seed burst can fell a foe and leave its ember', () => {
+  const b = hero('warden')
+  b.spells.witchfire.range = 0
+  learn(b, 'seeds')
+  b.seeds = [{ x: b.player.x + 300, y: b.player.y, life: 5 }]
+  b.foes = [makeFoe('boar', b.player.x + 300, b.player.y, 0, 1)]
+  const types = b.step(1 / 60, 0, 0).map(event => event.type)
+  assert.deepEqual(types, ['burst', 'kill'])
+  assert.deepEqual(b.embers, [{ x: b.player.x + 300, y: b.player.y, value: foes.boar.ember }])
+})
+
+test('firefly spirits circle the hero and sting a foe they cross, then leave it be for a while', () => {
+  const b = hero('warden')
+  b.spells.witchfire.range = 0
+  learn(b, 'fireflies')
+  const { cooldown, damage, range, spin } = spells.fireflies
+  const onRing = dummy(b, range)
+  const inside = dummy(b, range - fireflyRule.hit - 20)
+  const outside = dummy(b, range + fireflyRule.hit + 20)
+  const stings = []
+  // The first spirit starts on the ring where the foe stands.
+  stings.push(...b.step(1 / 60, 0, 0).filter(event => event.type === 'sting'))
+  assert.deepEqual(stings, [{ type: 'sting', at: { x: onRing.x, y: onRing.y } }])
+  assert.equal(hurt(onRing), damage)
+  // Still overlapping on the next frames, but the same foe is not stung twice.
+  advance(b, 3)
+  assert.equal(hurt(onRing), damage)
+
+  // Over whole turns each spirit crosses the foe once per turn.
+  const turns = 3
+  const frames = Math.round((turns * 360) / spin * 60)
+  for (let i = 0; i < frames; i++) b.step(1 / 60, 0, 0)
+  const crossings = turns * fireflyRule.count
+  assert.ok(Math.abs(hurt(onRing) / damage - 1 - crossings) <= 1, String(hurt(onRing) / damage))
+  assert.ok((360 / spin / fireflyRule.count) > cooldown)
+  assert.deepEqual([inside, outside].map(hurt), [0, 0])
+  assert.ok(Math.abs(b.flyTurn - ((frames + 4) / 60) * (spin * Math.PI) / 180) < 1e-6)
+})
+
+test('the ring follows the hero and a faster ring stings more often', () => {
+  const stung = upgrade => {
+    const b = hero('warden')
+    b.spells.witchfire.range = 0
+    learn(b, 'fireflies')
+    if (upgrade) b.spells.fireflies = upgraded(b.spells.fireflies, upgrade)
+    b.armor = Infinity
+    const foe = makeFoe('briarling', b.player.x + 200 + b.spells.fireflies.range, b.player.y, 0, 1e9)
+    b.foes = [foe]
+    // Walk so that the foe ends up on the ring, then wait.
+    advance(b, 75, 1, 0)
+    assert.equal(hurt(foe), 0)
+    for (let i = 0; i < 360; i++) {
+      b.step(1 / 60, 0, 0)
+      b.foes = [foe]
+    }
+    return hurt(foe)
+  }
+  const base = stung(null)
+  assert.ok(base > 0)
+  assert.ok(stung('fliesSpin') > base)
+  assert.ok(stung('fliesDamage') > base)
+})
+
+test('new spells stay out of the duel until learned and seeds do not follow into the garden', () => {
+  const b = hero('duelist')
+  learn(b, 'seeds')
+  b.seeds = [{ x: 100, y: 100, life: 9 }]
+  b.elapsed = DURATION
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.stage, 'garden')
+  assert.deepEqual(b.seeds, [])
+  assert.deepEqual(b.loadout, ['moonblade', 'seeds'])
+  assert.equal(b.hero, 'duelist')
+
+  // A seed and a firefly cannot hurt the shielded Duchess.
+  learn(b, 'fireflies')
+  b.spells.moonblade.range = 0
+  const lady = b.duchess
+  b.foes.find(foe => foe.kind === 'seal').health = 1e9
+  b.armor = Infinity
+  b.player = { x: lady.x - spells.fireflies.range, y: lady.y }
+  b.seeds = [{ x: lady.x, y: lady.y, life: 9 }]
+  advance(b, 240)
+  assert.equal(lady.health, foes.duchess.health)
+  assert.equal(b.seeds.length, 1)
 })

@@ -22,22 +22,56 @@ export type Stats = {
   arc: number
   // How far the funeral toll pushes foes away, in pixels.
   knockback: number
+  // How fast the firefly spirits circle, in degrees per second.
+  spin: number
 }
 
-export const spellIds = ['witchfire', 'moonblade', 'toll'] as const
+export const spellIds = ['witchfire', 'moonblade', 'toll', 'seeds', 'fireflies'] as const
 export type SpellId = (typeof spellIds)[number]
 
 export const spells: Record<SpellId, Stats> = {
   // A spark at the nearest foe in range.
-  witchfire: { cooldown: 0.19, damage: 1, range: 145, arc: 0, knockback: 0 },
-  // A swing that cuts every foe ahead of the warden.
-  moonblade: { cooldown: 0.7, damage: 5, range: 105, arc: 60, knockback: 0 },
-  // A bell stroke that hurts and pushes back every foe around the warden.
-  toll: { cooldown: 1.2, damage: 4, range: 90, arc: 0, knockback: 60 },
+  witchfire: { cooldown: 0.19, damage: 1, range: 145, arc: 0, knockback: 0, spin: 0 },
+  // A swing that cuts every foe ahead of the hero.
+  moonblade: { cooldown: 0.7, damage: 5, range: 105, arc: 60, knockback: 0, spin: 0 },
+  // A bell stroke that hurts and pushes back every foe around the hero.
+  toll: { cooldown: 1, damage: 5, range: 100, arc: 0, knockback: 60, spin: 0 },
+  // A seed dropped behind a moving hero every `cooldown`; it bursts under the
+  // first foe to reach it and burns everything within `range`.
+  seeds: { cooldown: 1.1, damage: 4, range: 54, arc: 0, knockback: 0, spin: 0 },
+  // Spirits circling at `range`; one stings a foe it crosses, and the same foe
+  // again only after `cooldown`.
+  fireflies: { cooldown: 0.5, damage: 2.5, range: 78, arc: 0, knockback: 0, spin: 190 },
 }
 
-// The warden starts with the first spell and can hold this many.
-export const loadout = { start: 'witchfire' as SpellId, slots: 3, cards: 3 }
+// A seed waits `life` seconds for a foe to come within `trigger` pixels.
+export const seedRule = { trigger: 26, life: 14 }
+// How many spirits circle the hero and how close one must pass to sting.
+export const fireflyRule = { count: 2, hit: 24 }
+
+// Each hero starts with one spell and has one gift that no card can give.
+export const heroIds = ['warden', 'duelist', 'ringer'] as const
+export type HeroId = (typeof heroIds)[number]
+export type Hero = {
+  spell: SpellId
+  // Movement speed in pixels per second.
+  speed: number
+  // Every `chain`-th witchfire spark leaps to a foe within `chainRange` of the target. 0 = never.
+  chain: number
+  chainRange: number
+  // Multiplies how far the funeral toll pushes foes.
+  knockback: number
+}
+
+export const heroes: Record<HeroId, Hero> = {
+  warden: { spell: 'witchfire', speed: 160, chain: 3, chainRange: 120, knockback: 1 },
+  duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1 },
+  ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6 },
+}
+
+// A hero can hold `slots` spells. A level-up shows `cards` cards, at most
+// `learnCards` of them new spells while a slot is free.
+export const loadout = { slots: 3, cards: 3, learnCards: 2 }
 
 // Experience needed to leave level 1, and how much more each later level asks.
 export const leveling = { first: 5, growth: 3 }
@@ -69,8 +103,8 @@ export const foes: Record<FoeKind, FoeStats> = {
   // Stops at a distance, takes aim, then looses a volley along the aimed line.
   archer: { health: 7, healthGrowth: 0.04, speed: 85, speedSpread: 10, speedGrowth: 0.05, reach: 18, ember: 3 },
   // The seal-flower and the Duchess stand still in the throne garden and leave no embers.
-  seal: { health: 110, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
-  duchess: { health: 700, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+  seal: { health: 85, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
+  duchess: { health: 480, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
 }
 
 // The throne garden fits one screen. The Duchess sits under the arch; a
@@ -129,6 +163,8 @@ export const upgradeIds = [
   'range', 'rate', 'damage',
   'bladeReach', 'bladeArc', 'bladeDamage',
   'tollRadius', 'tollKnockback', 'tollDamage',
+  'seedsRate', 'seedsRadius', 'seedsDamage',
+  'fliesSpin', 'fliesOrbit', 'fliesDamage',
 ] as const
 export type UpgradeId = (typeof upgradeIds)[number]
 
@@ -151,6 +187,12 @@ export const upgrades: Record<UpgradeId, Upgrade> = {
   tollRadius: { spell: 'toll', stat: 'range', change: v => v + 20 },
   tollKnockback: { spell: 'toll', stat: 'knockback', change: v => v + 25 },
   tollDamage: { spell: 'toll', stat: 'damage', change: v => v + 3 },
+  seedsRate: { spell: 'seeds', stat: 'cooldown', change: v => v * 0.8, shown: v => 1 / v },
+  seedsRadius: { spell: 'seeds', stat: 'range', change: v => v + 16 },
+  seedsDamage: { spell: 'seeds', stat: 'damage', change: v => v + 3 },
+  fliesSpin: { spell: 'fireflies', stat: 'spin', change: v => v + 60, shown: v => v / 360 },
+  fliesOrbit: { spell: 'fireflies', stat: 'range', change: v => v + 16 },
+  fliesDamage: { spell: 'fireflies', stat: 'damage', change: v => v + 1.5 },
 }
 
 export function upgraded(stats: Stats, id: UpgradeId): Stats {
