@@ -109,9 +109,76 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
   await page.keyboard.up('ArrowUp')
   await expect(page.locator('#level')).toHaveText(/^[2-9]$/)
   await expect(page.getByRole('progressbar', { name: /^Experience \d+ of [7-9]/ })).toBeVisible()
+
+  // The level-up stops the run and offers three witchfire upgrades.
+  const cards = page.locator('#choices button')
+  await expect(page.getByRole('heading', { name: 'Level 2' })).toBeVisible()
+  await expect(page.locator('#status')).toHaveText('LEVEL UP')
+  await expect(cards).toHaveCount(3)
+  await expect(cards.nth(0)).toContainText('Range 145 → 175')
+  await expect(cards.nth(1)).toContainText('Casts per second 5.3 → 7')
+  await expect(cards.nth(2)).toContainText('Damage 1 → 1.5')
+  const time = await page.locator('#clock').innerText()
+  const banished = await page.locator('#kills').innerText()
+  await page.keyboard.press('Escape')
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+  await page.clock.runFor(3000)
+  await expect(cards).toHaveCount(3)
+  await expect(page.locator('#panel')).toBeHidden()
+  await expect(page.locator('#clock')).toHaveText(time)
+  await expect(page.locator('#kills')).toHaveText(banished)
   await select(page, 'ru')
+  await expect(page.getByRole('heading', { name: 'Уровень 2' })).toBeVisible()
+  await expect(cards.nth(2)).toContainText('Урон 1 → 1.5')
   await expect(page.getByRole('progressbar', { name: /^Опыт \d+ из [7-9]/ })).toBeVisible()
+
+  await cards.nth(2).click()
+  // One click applies the upgrade once and the run goes on; the next level offers the next step.
+  await expect(page.locator('#cards')).toBeHidden()
+  await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
+  await page.clock.runFor(1500)
+  await expect(page.locator('#clock')).not.toHaveText(time)
+  // Keep circling the spot where briarlings fall until the next ember fills the bar.
+  for (let lap = 0; lap < 20 && await page.locator('#cards').isHidden(); lap++) {
+    const key = lap % 2 ? 'ArrowRight' : 'ArrowLeft'
+    await page.keyboard.down(key)
+    await page.clock.runFor(500)
+    await page.keyboard.up(key)
+  }
+  await expect(page.getByRole('heading', { name: 'Уровень 3' })).toBeVisible()
+  await expect(cards.nth(2)).toContainText('Урон 1.5 → 2')
+  await expect(cards.nth(1)).toContainText('Вспышек в секунду 5.3 → 7')
+  await page.keyboard.press('Digit2')
+  await expect(page.locator('#cards')).toBeHidden()
 })
+
+// Plays a whole run in small slices, taking a damage or rate card whenever one is offered.
+// A patrolling warden walks to the ember pile and back, which is enough to win.
+async function playRun(page: Page, patrol: boolean) {
+  let held: string | undefined
+  let picks = 0
+  for (let ms = 0; ms < 61_200; ms += 100) {
+    const [choosing, over] = await page.evaluate(() => [
+      !document.querySelector<HTMLElement>('#cards')!.hidden,
+      !document.querySelector<HTMLElement>('#panel')!.hidden,
+    ])
+    if (over) break
+    if (choosing) {
+      if (held) await page.keyboard.up(held)
+      held = undefined
+      await page.locator('#choices button').nth(2 - (picks++ % 2)).click()
+    }
+    const beat = ms % 2000
+    const key = !patrol || ms < 10_000 || beat >= 1400 ? undefined : beat < 700 ? 'ArrowLeft' : 'ArrowRight'
+    if (key !== held) {
+      if (held) await page.keyboard.up(held)
+      if (key) await page.keyboard.down(key)
+      held = key
+    }
+    await page.clock.runFor(100)
+  }
+  return picks
+}
 
 for (const outcome of ['victory', 'defeat'] as const) {
   test(outcome + ' can be translated and restarted', async ({ page }) => {
@@ -121,8 +188,9 @@ for (const outcome of ['victory', 'defeat'] as const) {
     // Fixed entry points keep both end-to-end scenarios repeatable.
     await page.evaluate((win: boolean) => { Math.random = () => win ? 0.05 : 0.55 }, outcome === 'victory')
     await page.getByRole('button', { name: 'Start run' }).click()
-    await page.clock.runFor(61_200)
     const won = outcome === 'victory'
+    const picks = await playRun(page, won)
+    expect(picks).toBeGreaterThan(won ? 2 : 0)
     await expect(page.locator('#title')).toHaveText(won ? 'The chapel stands' : 'The briars prevail')
     const kills = Number(await page.locator('#kills').innerText())
     expect(kills).toBeGreaterThan(0)

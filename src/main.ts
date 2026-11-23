@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { Battle, DURATION, HEIGHT, MAX_ARMOR, WIDTH, xpGoal } from './battle'
 import type { Phase, Point, Shot } from './battle'
+import type { UpgradeId } from './content'
 import { briarlingTexture, emberTexture, floorTexture, wardenTexture } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -19,6 +20,9 @@ const kills = document.querySelector<HTMLElement>('#kills')!
 const level = document.querySelector<HTMLElement>('#level')!
 const xp = document.querySelector<HTMLElement>('#xp')!
 const xpFill = xp.querySelector<HTMLElement>('i')!
+const cards = document.querySelector<HTMLElement>('#cards')!
+const cardsTitle = document.querySelector<HTMLElement>('#cards-title')!
+const choices = document.querySelector<HTMLElement>('#choices')!
 const directions = new Set([
   'KeyW',
   'KeyA',
@@ -91,9 +95,9 @@ class Arena extends Phaser.Scene {
     this.warden = this.add.image(0, 0, 'warden').setDepth(2)
     this.effects = this.add.graphics().setDepth(3)
     this.battle.foes = [
-      { x: 756, y: 138, speed: 0 },
-      { x: 815, y: 188, speed: 0 },
-      { x: 713, y: 348, speed: 0 },
+      { x: 756, y: 138, speed: 0, health: 1 },
+      { x: 815, y: 188, speed: 0, health: 1 },
+      { x: 713, y: 348, speed: 0, health: 1 },
     ]
 
     const selectLanguage = (next: Language) => {
@@ -151,6 +155,9 @@ class Arena extends Phaser.Scene {
     if (directions.has(event.code) && this.battle.phase === 'playing') {
       event.preventDefault()
       this.keys.add(event.code)
+    } else if (this.battle.phase === 'choosing' && /^Digit[1-9]$/.test(event.code)) {
+      const choice = this.battle.choices()[Number(event.code.slice(5)) - 1]
+      if (choice && !event.repeat) this.pick(choice.id)
     } else if (event.code === 'Escape' && !event.repeat) {
       if (this.battle.phase === 'paused') action.click()
       else this.pauseRun()
@@ -254,6 +261,7 @@ class Arena extends Phaser.Scene {
       this.lastArmor = b.armor
     }
     if (this.lastPhase !== b.phase) {
+      if (b.phase === 'choosing') this.keys.clear()
       this.showPhase()
       if (b.phase === 'paused' || b.phase === 'won' || b.phase === 'lost')
         action.focus({ preventScroll: true })
@@ -261,13 +269,43 @@ class Arena extends Phaser.Scene {
     this.lastPhase = b.phase
   }
 
+  private pick(id: UpgradeId) {
+    this.battle.choose(id)
+    this.renderBattle()
+    if (this.battle.phase === 'choosing') this.showCards()
+  }
+
+  private showCards() {
+    const copy = messages[language]
+    cardsTitle.textContent = copy.levelTitle(this.battle.choiceLevel)
+    choices.replaceChildren(
+      ...this.battle.choices().map((choice, index) => {
+        const button = document.createElement('button')
+        const key = document.createElement('kbd')
+        const name = document.createElement('b')
+        const change = document.createElement('span')
+        const { title, stat } = copy.upgrades[choice.id]
+        button.type = 'button'
+        key.textContent = String(index + 1)
+        name.textContent = title
+        change.textContent = `${stat} ${shown(choice.from)} → ${shown(choice.to)}`
+        button.append(key, name, change)
+        button.onclick = () => this.pick(choice.id)
+        return button
+      }),
+    )
+    choices.querySelector('button')?.focus({ preventScroll: true })
+  }
+
   private showPhase() {
     const b = this.battle
     const copy = messages[language]
     status.textContent = copy.status[b.phase]
-    panel.hidden = b.phase === 'playing'
+    panel.hidden = b.phase === 'playing' || b.phase === 'choosing'
+    cards.hidden = b.phase !== 'choosing'
     pause.disabled = b.phase !== 'playing'
-    if (b.phase === 'playing') return
+    if (b.phase === 'choosing') this.showCards()
+    if (b.phase === 'playing' || b.phase === 'choosing') return
     const screen = copy[b.phase]
     label.textContent = screen.label
     title.textContent = screen.title
@@ -279,6 +317,10 @@ class Arena extends Phaser.Scene {
       action.textContent = copy.retry
     }
   }
+}
+
+function shown(value: number) {
+  return String(Number(value.toFixed(1)))
 }
 
 new Phaser.Game({

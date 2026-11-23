@@ -172,6 +172,40 @@ h1 {
   border-top: 3px solid var(--gold);
   box-shadow: 6px 8px 0 #10130f77;
 }
+.cards {
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(90%, 780px);
+}
+.choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 18px;
+}
+.choices button {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 14px;
+  text-align: left;
+  color: inherit;
+  background: #34382f;
+  border: 1px solid #606557;
+  border-bottom: 3px solid var(--gold);
+}
+.choices button:hover {
+  background: #414639;
+}
+.choices b {
+  font-size: 1.05rem;
+}
+.choices span {
+  color: var(--gold);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
 [hidden] {
   display: none !important;
 }
@@ -293,13 +327,55 @@ footer span {
   .telemetry {
     padding: 14px 0;
   }
+  /* A panel needs more height than the arena has on a phone. Grow the arena
+     downwards and let the picture fill it, cropped, instead of widening the page. */
   .arena:has(.panel:not([hidden])) {
+    aspect-ratio: auto;
     min-height: 300px;
+  }
+  .arena:has(.panel:not([hidden])) #game {
+    position: absolute;
+    inset: 0;
+  }
+  .arena:has(.panel:not([hidden])) canvas {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    object-fit: cover;
   }
   .panel {
     left: 3%;
     width: min(67%, 330px);
     padding: 16px;
+  }
+  .arena:has(.cards:not([hidden])) {
+    min-height: 330px;
+  }
+  .cards {
+    left: 50%;
+    width: 94%;
+    padding: 12px;
+  }
+  .cards p {
+    display: none;
+  }
+  .choices {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .choices button {
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    align-items: center;
+    padding: 7px 9px;
+  }
+  .choices span {
+    grid-column: 2;
+  }
+  .cards h2 {
+    font-size: 28px;
+    margin: 4px 0;
   }
   h2 {
     font-size: 36px;
