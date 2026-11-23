@@ -258,7 +258,7 @@ class Arena extends Phaser.Scene {
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
         const span = {
-          pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, bloom: 0.22, summon: 0.5, rise: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, buds: 0.5, phase: 0.9, bloom: 0.22, summon: 0.5, rise: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
@@ -271,7 +271,7 @@ class Arena extends Phaser.Scene {
   private renderBattle() {
     const b = this.battle
     // Moving between the court and the garden swaps the ground and the HUD.
-    const place = b.stage + language
+    const place = b.stage + b.duelPhase + language
     if (this.lastPlace !== place) {
       const copy = messages[language]
       const area = b.stage === 'court' ? court : garden
@@ -325,7 +325,7 @@ class Arena extends Phaser.Scene {
         w.fillStyle(0x17131c, 0.8)
         w.fillRect(left - 1, below - 1, span + 2, 7)
         w.fillStyle(foe.kind === 'seal' ? 0xd877e6 : 0xe7bd78, 1)
-        w.fillRect(left, below, (span * Math.max(0, foe.health)) / foe.full, 5)
+        w.fillRect(left, below, span * Math.max(0, Math.min(1, foe.health / foe.full)), 5)
       }
       if (foe.mode === 'windup') {
         const progress = 1 - foe.timer / boarCharge.windup
@@ -413,10 +413,28 @@ class Arena extends Phaser.Scene {
         w.strokeCircle(lady.x, lady.y, 50 + 6 * pulse)
       }
       if (b.lash.warned) {
+        // The marked sector: an outline from the first moment, filling as the lash nears.
         const progress = 1 - b.lash.timer / garden.lash.windup
         const arc = (garden.lash.arc * Math.PI) / 180
-        w.fillStyle(0xb02a55, 0.12 + 0.3 * progress)
-        w.slice(lady.x, lady.y, garden.lash.range, b.lash.facing - arc, b.lash.facing + arc).fillPath()
+        const { range } = garden.lash
+        const from = b.lash.facing - arc, to = b.lash.facing + arc
+        w.fillStyle(0xb02a55, 0.1 + 0.32 * progress)
+        w.slice(lady.x, lady.y, range, from, to).fillPath()
+        w.fillStyle(0xff5a7d, 0.22)
+        w.slice(lady.x, lady.y, range * progress, from, to).fillPath()
+        w.lineStyle(2, 0xff9fbd, 0.55 + 0.4 * progress)
+        w.lineBetween(lady.x, lady.y, lady.x + Math.cos(from) * range, lady.y + Math.sin(from) * range)
+        w.lineBetween(lady.x, lady.y, lady.x + Math.cos(to) * range, lady.y + Math.sin(to) * range)
+      }
+      if (b.duelPhase === 2) {
+        // Buds beside the seal-flower: restless all phase, bright before they open.
+        const soon = b.shielded && b.budding && b.lash.warned
+        for (const bed of b.buds()) {
+          w.lineStyle(soon ? 4 : 2, 0xff865e, soon ? 0.5 + 0.5 * pulse : 0.3)
+          w.strokeCircle(bed.x, bed.y, soon ? 30 + 8 * pulse : 26)
+          w.fillStyle(0xff865e, soon ? 0.3 : 0.12)
+          w.fillCircle(bed.x, bed.y, 14)
+        }
       }
     }
     while (this.oils.length < b.oils.length) {
@@ -491,6 +509,12 @@ class Arena extends Phaser.Scene {
       } else if (event.type === 'summon' || event.type === 'rise') {
         g.lineStyle(4, 0x9fc38a, fade)
         g.strokeCircle(event.at.x, event.at.y, 30 + (1 - fade) * 70)
+      } else if (event.type === 'buds') {
+        g.lineStyle(4, 0xff865e, fade)
+        for (const bed of event.at) g.strokeCircle(bed.x, bed.y, 26 + (1 - fade) * 44)
+      } else if (event.type === 'phase' && lady) {
+        g.lineStyle(6, 0xff5a7d, fade)
+        g.strokeCircle(lady.x, lady.y, 60 + (1 - fade) * 260)
       } else if (event.type === 'mend') {
         // The golden thread from a moth to the foe it mends.
         g.lineStyle(2.5, 0xffe08a, 0.8 * fade)
@@ -681,7 +705,9 @@ class Arena extends Phaser.Scene {
     const b = this.battle
     const copy = messages[language]
     status.textContent =
-      b.phase === 'playing' && b.stage === 'garden' ? copy.garden.status : copy.status[b.phase]
+      b.phase === 'playing' && b.stage === 'garden'
+        ? b.duelPhase === 2 ? copy.garden.status2 : copy.garden.status
+        : copy.status[b.phase]
     panel.hidden = b.phase === 'playing' || b.phase === 'choosing'
     cards.hidden = b.phase !== 'choosing'
     pause.disabled = b.phase !== 'playing'
@@ -703,6 +729,7 @@ class Arena extends Phaser.Scene {
         ...(Object.keys(b.relics).length
           ? [copy.relicLine(Object.entries(b.relics).map(([id, level]) => `${copy.relics[id as RelicId].name} ${level}`).join(', '))]
           : []),
+        ...(b.stage === 'garden' ? [copy.phaseLine(b.duelPhase)] : []),
         ...(b.phase === 'lost' ? [copy.fell[b.stage]] : []),
       ].join(' ')
       action.textContent = copy.retry

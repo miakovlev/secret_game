@@ -54,6 +54,8 @@ export type BattleEvent =
   | { type: 'sting'; at: Point }
   | { type: 'garden' }
   | { type: 'crown'; open: boolean }
+  | { type: 'phase'; phase: number }
+  | { type: 'buds'; at: Point[] }
   | { type: 'lash'; at: Point; facing: number; range: number; arc: number }
   | { type: 'level'; level: number }
 // The run starts in the chapel court and ends in the throne garden.
@@ -131,6 +133,9 @@ export class Battle {
   // counts down to her next strike, or through its warning once `warned`.
   crownOpen = 0
   seals = 0
+  // The duel has two phases; `lashes` counts her strikes in the second one.
+  duelPhase = 1
+  lashes = 0
   lash = { timer: garden.lash.every, warned: false, facing: 0 }
   // How many groups each wave of the schedule has already sent in.
   private fired = waves.map(() => 0)
@@ -505,6 +510,36 @@ export class Battle {
       type: 'lash', at: { x: lady.x, y: lady.y }, facing: this.lash.facing, range: lash.range, arc,
     })
     this.lash = { timer: lash.every, warned: false, facing: 0 }
+    if (this.duelPhase < 2) return
+    this.lashes++
+    if (this.lashes % garden.phase2.every) return
+    // The buds beside the seal-flower burst open and let briarlings out.
+    const beds = this.buds()
+    const stats = foes.briarling
+    for (const bed of beds) {
+      for (let i = 0; i < garden.phase2.perBud; i++) {
+        this.foes.push(makeFoe(
+          'briarling',
+          bed.x + (i - (garden.phase2.perBud - 1) / 2) * 28,
+          bed.y,
+          stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
+          stats.health + this.elapsed * stats.healthGrowth,
+        ))
+      }
+    }
+    events.push({ type: 'buds', at: beds })
+  }
+
+  // The flowerbeds that let briarlings out in the second phase: the ones
+  // after the bed that holds, or last held, the seal-flower.
+  buds(): Point[] {
+    const { beds, phase2 } = garden
+    return Array.from({ length: phase2.buds }, (_, i) => beds[(this.seals + i) % beds.length])
+  }
+
+  // Whether the next lash will open the buds, so the scene can warn of it.
+  get budding() {
+    return this.duelPhase === 2 && (this.lashes + 1) % garden.phase2.every === 0
   }
 
   // Foes a spell may hit: a shielded Duchess and a stooped Gardener cannot be
@@ -567,6 +602,11 @@ export class Battle {
 
   private strike(foe: Foe, damage: number, events: BattleEvent[]) {
     foe.health -= damage
+    if (foe.kind === 'duchess' && this.duelPhase === 1 && foe.health > 0 && foe.health <= foe.full * garden.phase2.at) {
+      // Half her health is gone: the second phase begins, once.
+      this.duelPhase = 2
+      events.push({ type: 'phase', phase: 2 })
+    }
     if (foe.health > 0) return
     const fallen = { x: foe.x, y: foe.y }
     this.foes.splice(this.foes.indexOf(foe), 1)
@@ -599,8 +639,11 @@ export class Battle {
   private burst(stats: Stats, dt: number, events: BattleEvent[]) {
     const gap = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y)
     for (const seed of this.seeds) seed.life -= dt
+    // A walking foe must step on a seed; a rooted one sets it off from anywhere in the blast.
     const woken = this.seeds.filter(seed =>
-      this.targets().some(foe => gap(foe, seed) < seedRule.trigger),
+      this.targets().some(foe =>
+        gap(foe, seed) < (foes[foe.kind].speed ? seedRule.trigger : stats.range),
+      ),
     )
     for (const seed of woken) {
       events.push({ type: 'burst', at: { x: seed.x, y: seed.y }, radius: stats.range })

@@ -1831,3 +1831,204 @@ test('blessed fireflies light a second swarm across the ring', () => {
   b.step(0, 0, 0)
   assert.deepEqual([east, south, between].map(hurt), [damage, damage, 0])
 })
+
+// --- Step 3.5: the second phase of the duel.
+
+// The duel with the seal-flower made unbreakable and the hero unkillable, so
+// only the Duchess's own rhythm plays out.
+function lashing(phase) {
+  const { b, seal, lady } = inGarden()
+  b.spells.witchfire.range = 0
+  b.armor = Infinity
+  seal.health = seal.full = 1e9
+  b.duelPhase = phase
+  const count = lashes => {
+    const events = []
+    while (events.filter(event => event.type === 'lash').length < lashes) {
+      events.push(...b.step(1 / 60, 0, 0))
+    }
+    return events
+  }
+  return { b, seal, lady, count }
+}
+
+test('the second phase begins once when the Duchess is down to half, even after one great blow', () => {
+  const wound = blows => {
+    const { b, seal, lady } = inGarden()
+    b.armor = Infinity
+    b.spells.witchfire.range = 2000
+    b.spells.witchfire.cooldown = 0.1
+    seal.health = 0.1
+    b.step(1 / 60, 0, 0)
+    const phases = []
+    for (const damage of blows) {
+      b.spells.witchfire.damage = damage
+      b.timers.witchfire = 0
+      phases.push(b.step(1 / 60, 0, 0).filter(event => event.type === 'phase'))
+    }
+    return { b, lady, phases }
+  }
+  const full = foes.duchess.health
+  assert.equal(garden.phase2.at, 0.5)
+  // Step by step across the line.
+  const slow = wound([full * 0.3, full * 0.15, full * 0.1, full * 0.1, full * 0.1])
+  assert.deepEqual(slow.phases, [[], [], [{ type: 'phase', phase: 2 }], [], []])
+  assert.equal(slow.b.duelPhase, 2)
+  assert.equal(slow.b.phase, 'playing')
+  // One blow from well above half to well below it.
+  const leap = wound([full * 0.1, full * 0.7, full * 0.05])
+  assert.deepEqual(leap.phases, [[], [{ type: 'phase', phase: 2 }], []])
+  // Exactly half counts.
+  assert.equal(wound([full * 0.5]).b.duelPhase, 2)
+  // A blow that fells her outright from above half wins without a second phase.
+  const felled = wound([full * 0.2, full])
+  assert.deepEqual(felled.phases, [[], []])
+  assert.equal(felled.b.phase, 'won')
+  assert.equal(felled.b.duelPhase, 1)
+  assert.equal(new Battle().duelPhase, 1)
+})
+
+test('in the first phase no bud opens, however long she lashes', () => {
+  const { b, count } = lashing(1)
+  const events = count(6)
+  assert.ok(!events.some(event => event.type === 'buds'))
+  assert.deepEqual(b.foes.map(foe => foe.kind), ['duchess', 'seal'])
+  assert.equal(b.lashes, 0)
+  assert.ok(!b.budding)
+})
+
+test('in the second phase the buds beside the seal-flower let briarlings out after every second lash', () => {
+  const { every, buds, perBud } = garden.phase2
+  const { b, seal, count } = lashing(2)
+  assert.deepEqual({ x: seal.x, y: seal.y }, garden.beds[0])
+  const beside = [garden.beds[1], garden.beds[2]].slice(0, buds)
+  assert.deepEqual(b.buds(), beside)
+
+  // The lash before the opening one is the warning.
+  count(every - 1)
+  assert.ok(b.budding)
+  assert.ok(!b.foes.some(foe => foe.kind === 'briarling'))
+  const opening = count(1)
+  assert.deepEqual(opening.filter(event => event.type === 'buds'), [{ type: 'buds', at: beside }])
+  const pack = b.foes.filter(foe => foe.kind === 'briarling')
+  assert.equal(pack.length, buds * perBud)
+  assert.ok(!b.budding)
+  for (const bed of beside) {
+    const here = pack.filter(foe => Math.hypot(foe.x - bed.x, foe.y - bed.y) < 40)
+    assert.equal(here.length, perBud)
+  }
+  for (const foe of pack) {
+    assert.ok(Math.hypot(foe.x - seal.x, foe.y - seal.y) > 100)
+    assert.ok(foe.health >= foes.briarling.health + DURATION * foes.briarling.healthGrowth - 1e-9)
+  }
+  // They come for the hero, draw the witchfire, and leave embers like any briarling.
+  const before = pack.map(foe => Math.hypot(foe.x - b.player.x, foe.y - b.player.y))
+  b.foes = b.foes.filter(foe => foe.kind !== 'briarling' || foe === pack[0])
+  advance(b, 20)
+  assert.ok(Math.hypot(pack[0].x - b.player.x, pack[0].y - b.player.y) < before[0])
+  pack[0].health = 0.1
+  b.spells.witchfire.range = 2000
+  b.timers.witchfire = 0
+  const shot = b.step(1 / 60, 0, 0)
+  assert.ok(shot.some(event => event.type === 'kill'))
+  assert.equal(b.embers.length, 1)
+})
+
+test('the buds stay shut while the crown is open and count on from the next flower', () => {
+  const { b, seal, count } = lashing(2)
+  count(1)
+  assert.ok(b.budding)
+  // The flower falls: no lash, so no buds, for the whole window.
+  seal.health = 0.1
+  b.spells.witchfire.range = 2000
+  b.spells.witchfire.damage = 0.2
+  b.step(1 / 60, 0, 0)
+  b.spells.witchfire.range = 0
+  const quiet = []
+  while (b.crownOpen > 0) quiet.push(...b.step(1 / 60, 0, 0))
+  assert.ok(!quiet.some(event => event.type === 'buds' || event.type === 'lash'))
+  assert.equal(b.lashes, 1)
+  // The next flower blooms on the second bed, so the buds are now the third and fourth.
+  b.foes.find(foe => foe.kind === 'seal').health = 1e9
+  assert.deepEqual(b.buds(), [garden.beds[2], garden.beds[3]])
+  const opening = []
+  while (!opening.some(event => event.type === 'lash')) opening.push(...b.step(1 / 60, 0, 0))
+  assert.deepEqual(opening.filter(event => event.type === 'buds'), [{ type: 'buds', at: [garden.beds[2], garden.beds[3]] }])
+})
+
+test('every spell can reach the seal-flower and the open Duchess without touching them', () => {
+  for (const spell of ['witchfire', 'moonblade', 'toll', 'seeds', 'fireflies']) {
+    for (const target of ['seal', 'duchess']) {
+      const { b, seal, lady } = inGarden()
+      const first = b.loadout[0]
+      b.spells[first].range = 0
+      if (spell !== first) learn(b, spell)
+      else b.spells[first] = { ...spells[first] }
+      if (target === 'duchess') {
+        b.foes = [lady]
+        b.crownOpen = 1e9
+      } else {
+        seal.health = seal.full = 1e9
+      }
+      const foe = target === 'seal' ? seal : lady
+      // Stand a safe step outside the target's reach, facing it.
+      const safe = foes[target].reach + 14
+      const stand = spell === 'fireflies' ? spells.fireflies.range : safe
+      b.player = { x: foe.x, y: foe.y + stand }
+      b.facing = -Math.PI / 2
+      b.lash = { timer: 1e9, warned: false, facing: 0 }
+      const start = foe.health
+      // Seeds need a hero on the move: pace sideways beside the target.
+      for (let i = 0; i < 180; i++) {
+        const pace = spell === 'seeds' ? (Math.floor(i / 20) % 2 ? -1 : 1) : 0
+        b.step(1 / 60, pace, 0)
+        if (spell === 'moonblade') b.facing = -Math.PI / 2
+        b.lash.timer = 1e9
+      }
+      assert.ok(foe.health < start, spell + ' cannot hurt the ' + target)
+      assert.equal(b.armor, MAX_ARMOR, spell + ' had to touch the ' + target)
+    }
+  }
+})
+
+test('a seed sets off under a rooted target from anywhere in its blast, but still needs a walker to step on it', () => {
+  const { b, seal } = inGarden()
+  b.spells.witchfire.range = 0
+  learn(b, 'seeds')
+  seal.health = seal.full = 1e9
+  const { range, damage } = spells.seeds
+  assert.ok(range > seedRule.trigger)
+  b.seeds = [
+    { x: seal.x + range - 6, y: seal.y, life: 9 },
+    { x: seal.x + range + 30, y: seal.y, life: 9 },
+  ]
+  const walker = makeFoe('briarling', seal.x + range + 30 + seedRule.trigger + 10, seal.y, 0, 1e9)
+  b.foes.push(walker)
+  const bursts = b.step(1 / 60, 0, 0).filter(event => event.type === 'burst')
+  assert.equal(bursts.length, 1)
+  assert.equal(seal.full - seal.health, damage)
+  assert.equal(b.seeds.length, 1)
+  assert.equal(hurt(walker), 0)
+})
+
+test('blessings and relics earned in the court still work in the duel', () => {
+  const b = playing()
+  b.blessed.witchfire = true
+  b.relics.ring = 2
+  b.trial = 'won'
+  b.elapsed = DURATION
+  b.step(1 / 60, 0, 0)
+  assert.deepEqual(b.blessed, { witchfire: true })
+  assert.deepEqual(b.relics, { ring: 2 })
+  // A spark at the seal-flower blooms onto a briarling standing beside it.
+  const seal = b.foes.find(foe => foe.kind === 'seal')
+  seal.health = seal.full = 1e9
+  const beside = makeFoe('briarling', seal.x + 30, seal.y, 0, 1e9)
+  b.foes.push(beside)
+  b.player = { x: seal.x - 60, y: seal.y }
+  b.timers.witchfire = 0
+  b.immunity = 9
+  const events = b.step(1 / 60, 0, 0)
+  assert.ok(events.some(event => event.type === 'bloom'))
+  assert.equal(hurt(beside), witchfire.damage * blessings.witchfire.share)
+})

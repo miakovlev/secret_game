@@ -152,6 +152,10 @@ export const garden = {
   // The lash strikes every `every` seconds after `windup` seconds of warning,
   // across a sector `arc` degrees to each side of the warden and `range` long.
   lash: { every: 2.8, windup: 1, arc: 26, range: 620 },
+  // The second phase begins when the Duchess is down to `at` of her health.
+  // After every `every`-th lash, the `buds` flowerbeds next to the one holding
+  // the seal-flower each let out `perBud` briarlings.
+  phase2: { at: 0.5, every: 2, buds: 2, perBud: 2 },
 }
 
 // The boar starts pawing within `trigger` pixels, warns for `windup` seconds,

@@ -502,11 +502,15 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
         await expect(page.locator('#clock')).toHaveText('100%')
         await seal(1)
         // Once the flower falls the crown opens and the Duchess can be struck down.
+        let secondPhase = false
         for (let slice = 0; slice < 80 && await page.locator('#panel').isHidden(); slice++) {
           await page.clock.runFor(250)
           const now = await garden()
           if (!now.shielded && now.kinds.length) await expect(page.locator('#clock')).not.toHaveText('100%')
+          // Below half health the status names the second phase.
+          secondPhase ||= (await page.locator('#status').innerText()) === 'THE BUDS OPEN'
         }
+        expect(secondPhase).toBe(true)
       } else {
         // A warden who stands still in the marked sector is struck by the lash.
         await playRun(page, false, 8000)
@@ -524,6 +528,8 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
     const level = await page.locator('#level').innerText()
     expect(report).toContain('Level reached: ' + level)
     expect(report).toContain('Spells: Witchfire')
+    if (duel) expect(report).toContain(`Duel phase reached: ${won ? 2 : 1} of 2.`)
+    else expect(report).not.toContain('Duel phase')
     if (duel) expect(time).toMatch(/^09:[0-2]\d$/)
     if (won) {
       expect(report).not.toContain('The watch ended')
@@ -537,6 +543,7 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
     await select(page, 'ru')
     await expect(page.locator('#title')).toHaveText(won ? 'Венец снят' : 'Терновник победил')
     await expect(page.locator('#message')).toContainText(`Время в бою — ${time}. Изгнано врагов — ${kills}. Достигнут уровень — ${level}. Заклинания: Ведьмин огонь`)
+    if (duel) await expect(page.locator('#message')).toContainText(`Достигнута фаза дуэли: ${won ? 2 : 1} из 2.`)
     if (!won) await expect(page.locator('#message')).toContainText(duel ? 'Дозор окончен в тронном саду.' : 'Дозор окончен у часовни.')
     await page.getByRole('button', { name: 'Ещё раз' }).click()
     await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
