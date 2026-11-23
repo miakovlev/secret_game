@@ -7,7 +7,7 @@ import {
 import type { HeroId, RelicId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture, gardenTexture,
-  heroTexture, markedTexture, oilTexture, reliquaryTexture, sealTexture,
+  heroTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -122,6 +122,8 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('archer', archerTexture())
     this.textures.addCanvas('oil', oilTexture())
     this.textures.addCanvas('marked', markedTexture())
+    this.textures.addCanvas('knight', knightTexture())
+    this.textures.addCanvas('moth', mothTexture())
     this.textures.addCanvas('reliquary', reliquaryTexture())
     // The running scene, for browser tests and for poking at it from the console.
     Object.assign(window, { arena: this })
@@ -254,7 +256,7 @@ class Arena extends Phaser.Scene {
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
         const span = {
-          pickup: 0.25, heal: 0.45, open: 0.5, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
@@ -444,6 +446,11 @@ class Arena extends Phaser.Scene {
       } else if (event.type === 'sting') {
         g.lineStyle(2, 0xd8f59a, fade)
         g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 10)
+      } else if (event.type === 'mend') {
+        // The golden thread from a moth to the foe it mends.
+        g.lineStyle(2.5, 0xffe08a, 0.8 * fade)
+        g.lineBetween(event.from.x, event.from.y, event.to.x, event.to.y)
+        g.strokeCircle(event.to.x, event.to.y, 10 + (1 - fade) * 10)
       } else if (event.type === 'open') {
         g.lineStyle(3, 0xffe08a, fade)
         g.strokeCircle(event.at.x, event.at.y, 14 + (1 - fade) * 40)

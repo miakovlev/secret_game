@@ -1,5 +1,6 @@
 import {
-  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, leveling, loadout, oil, relicIds, relicRule,
+  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, leveling, loadout, mothHeal, oil, relicIds,
+  relicRule,
   relics, run, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
 import type { FoeKind, HeroId, RelicId, SpellId, Stats, UpgradeId, Wave } from './content.ts'
@@ -17,6 +18,8 @@ export type Foe = Point & {
   kind: FoeKind
   speed: number
   health: number
+  // The health it came in with; a healer moth never mends beyond it.
+  full: number
   mode: FoeMode
   timer: number
   dir: Point
@@ -39,6 +42,7 @@ export type BattleEvent =
   | { type: 'chest'; at: Point }
   | { type: 'open'; at: Point }
   | { type: 'arrow'; at: Point }
+  | ({ type: 'mend' } & Shot)
   | ({ type: 'chain' } & Shot)
   | { type: 'sow'; at: Point }
   | { type: 'burst'; at: Point; radius: number }
@@ -63,7 +67,7 @@ export function xpGoal(level: number) {
 }
 
 export function makeFoe(kind: FoeKind, x: number, y: number, speed: number, health: number): Foe {
-  return { kind, x, y, speed, health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0 }
+  return { kind, x, y, speed, health, full: health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0 }
 }
 
 // How many times the wave's group has been due by the given second of the run.
@@ -247,6 +251,29 @@ export class Battle {
 
   private mend() {
     this.armor = Math.min(this.maxArmor, this.armor + 1)
+  }
+
+  // The moth keeps its distance and mends the most wounded foe within its reach.
+  private moth(foe: Foe, dt: number, distance: number, toward: Point, events: BattleEvent[]) {
+    const { keep, range, beat, amount } = mothHeal
+    const way = distance > keep ? 1 : distance < keep - 60 ? -1 : 0
+    foe.x += toward.x * way * dt * foe.speed
+    foe.y += toward.y * way * dt * foe.speed
+    if (foe.timer > 0) return
+    let patient: Foe | undefined
+    let worst = 0
+    for (const other of this.foes) {
+      const lost = other.full - other.health
+      const near = Math.hypot(other.x - foe.x, other.y - foe.y) < range
+      if (other.kind !== 'moth' && near && lost > worst) {
+        patient = other
+        worst = lost
+      }
+    }
+    if (!patient) return
+    patient.health = Math.min(patient.full, patient.health + amount)
+    foe.timer = beat
+    events.push({ type: 'mend', from: { x: foe.x, y: foe.y }, to: { x: patient.x, y: patient.y } })
   }
 
   private collect(events: BattleEvent[]) {
@@ -617,6 +644,8 @@ export class Battle {
         this.boar(foe, dt, distance, toward)
       } else if (foe.kind === 'archer') {
         this.archer(foe, dt, distance, toward, events)
+      } else if (foe.kind === 'moth') {
+        this.moth(foe, dt, distance, toward, events)
       } else {
         const travel = Math.min(distance, dt * foe.speed)
         foe.x += toward.x * travel

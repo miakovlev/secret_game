@@ -77,9 +77,9 @@ export const loadout = { slots: 3, cards: 3, learnCards: 2 }
 export const leveling = { first: 5, growth: 3 }
 
 // Seconds of waves before dawn.
-export const run = { duration: 300 }
+export const run = { duration: 540 }
 
-export const foeKinds = ['briarling', 'marked', 'boar', 'archer', 'seal', 'duchess'] as const
+export const foeKinds = ['briarling', 'marked', 'boar', 'archer', 'knight', 'moth', 'seal', 'duchess'] as const
 export type FoeKind = (typeof foeKinds)[number]
 
 // Later foes are tougher and quicker: each value grows per second of the run.
@@ -104,9 +104,13 @@ export const foes: Record<FoeKind, FoeStats> = {
   boar: { health: 16, healthGrowth: 0.08, speed: 70, speedSpread: 10, speedGrowth: 0.05, reach: 26, ember: 4 },
   // Stops at a distance, takes aim, then looses a volley along the aimed line.
   archer: { health: 7, healthGrowth: 0.04, speed: 85, speedSpread: 10, speedGrowth: 0.05, reach: 18, ember: 3 },
+  // A stone knight: slow and very hard to wear down.
+  knight: { health: 70, healthGrowth: 0.1, speed: 58, speedSpread: 6, speedGrowth: 0.02, reach: 26, ember: 6 },
+  // A healer moth: frail, hangs back and mends the most wounded foe near it.
+  moth: { health: 12, healthGrowth: 0.02, speed: 105, speedSpread: 10, speedGrowth: 0, reach: 16, ember: 4 },
   // The seal-flower and the Duchess stand still in the throne garden and leave no embers.
-  seal: { health: 85, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
-  duchess: { health: 480, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+  seal: { health: 150, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
+  duchess: { health: 900, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
 }
 
 // The throne garden fits one screen. The Duchess sits under the arch; a
@@ -156,6 +160,10 @@ export const relics: Record<RelicId, { amount: number }> = {
   ring: { amount: 0.1 },
 }
 
+// The moth hovers about `keep` pixels from the hero. Every `beat` seconds it
+// restores `amount` health to the most wounded foe within `range` of itself.
+export const mothHeal = { keep: 200, range: 280, beat: 1, amount: 6 }
+
 // A banished foe sometimes leaves lamp oil that restores one pip of armor.
 export const oil = { chance: 0.04 }
 
@@ -165,22 +173,30 @@ export const oil = { chance: 0.04 }
 export type Wave = { kind: FoeKind; from: number; count: number; to?: number; every?: number }
 
 export const waves: Wave[] = [
-  // 0:00–1:00 — briarlings alone.
-  { kind: 'briarling', from: 0, to: 60, every: 1.1, count: 1 },
+  // 0:00–2:00 — briarlings alone.
+  { kind: 'briarling', from: 0, to: 120, every: 1.1, count: 1 },
   // From 0:45 a marked briarling walks in now and then, carrying a reliquary.
-  { kind: 'marked', from: 45, to: 300, every: 70, count: 1 },
-  // 1:00–2:30 — thorn boars join.
-  { kind: 'briarling', from: 60, to: 150, every: 0.9, count: 1 },
-  { kind: 'boar', from: 60, to: 150, every: 10, count: 1 },
-  // 2:30–4:00 — court archers join.
-  { kind: 'briarling', from: 150, to: 240, every: 0.77, count: 1 },
-  { kind: 'archer', from: 150, to: 240, every: 9, count: 1 },
-  { kind: 'boar', from: 155, to: 240, every: 15, count: 1 },
-  // 4:00–5:00 — everything at once.
-  { kind: 'briarling', from: 240, count: 8 },
-  { kind: 'briarling', from: 240, to: 300, every: 0.6, count: 1 },
-  { kind: 'boar', from: 245, to: 300, every: 9, count: 1 },
-  { kind: 'archer', from: 242, to: 300, every: 7, count: 2 },
+  { kind: 'marked', from: 45, to: 540, every: 80, count: 1 },
+  // 2:00–4:00 — thorn boars join.
+  { kind: 'briarling', from: 120, to: 240, every: 0.9, count: 1 },
+  { kind: 'boar', from: 120, to: 240, every: 11, count: 1 },
+  // 4:00–6:00 — court archers join.
+  { kind: 'briarling', from: 240, to: 360, every: 0.8, count: 1 },
+  { kind: 'archer', from: 240, to: 360, every: 10, count: 1 },
+  { kind: 'boar', from: 246, to: 360, every: 17, count: 1 },
+  // 6:00–8:00 — stone knights hold the front and healer moths mend them.
+  { kind: 'briarling', from: 360, to: 480, every: 0.8, count: 1 },
+  { kind: 'knight', from: 360, to: 480, every: 13, count: 1 },
+  { kind: 'moth', from: 368, to: 480, every: 24, count: 1 },
+  { kind: 'archer', from: 366, to: 480, every: 16, count: 1 },
+  // 8:00–9:00 — everything at once, briarlings in packs.
+  { kind: 'briarling', from: 480, count: 8 },
+  { kind: 'briarling', from: 480, to: 540, every: 0.65, count: 1 },
+  { kind: 'briarling', from: 500, to: 540, every: 20, count: 6 },
+  { kind: 'knight', from: 484, to: 540, every: 11, count: 1 },
+  { kind: 'moth', from: 490, to: 540, every: 22, count: 1 },
+  { kind: 'boar', from: 486, to: 540, every: 10, count: 1 },
+  { kind: 'archer', from: 482, to: 540, every: 8, count: 2 },
 ]
 
 export const upgradeIds = [

@@ -70,7 +70,7 @@ test('switching during a run or pause preserves the HUD and the simulation', asy
   await page.clock.runFor(1300)
   await page.keyboard.up('ArrowUp')
   const time = await page.locator('#clock').innerText()
-  expect(time).not.toBe('05:00')
+  expect(time).not.toBe('09:00')
   await select(page, 'ru')
   await expect(page.locator('#clock')).toHaveText(time)
   await expect(page.locator('#panel')).toBeHidden()
@@ -330,7 +330,7 @@ test('a reliquary offers relics that fill their own slots, level up and last the
   expect(errors).toEqual([])
 })
 
-test('boars and archers join the later waves and mark their attacks', async ({ page }) => {
+test('boars, archers, knights and moths fill the last minute and mark their attacks', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
   await frozenClock(page)
@@ -344,24 +344,28 @@ test('boars and archers join the later waves and mark their attacks', async ({ p
   })
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    battle.elapsed = 241.5
+    battle.elapsed = 481.5
     battle.armor = 1e6
   })
-  const seen = { boar: false, archer: false, windup: false, aim: false, arrows: false }
+  const seen = { boar: false, archer: false, knight: false, moth: false, windup: false, aim: false, arrows: false }
   for (let slice = 0; slice < 120 && Object.values(seen).includes(false); slice++) {
     await page.clock.runFor(250)
     if (await page.locator('#cards').isVisible()) await page.keyboard.press('Digit1')
     const now = await census()
     seen.boar ||= now.kinds.includes('boar')
     seen.archer ||= now.kinds.includes('archer')
+    seen.knight ||= now.kinds.includes('knight')
+    seen.moth ||= now.kinds.includes('moth')
     seen.windup ||= now.modes.includes('windup')
     seen.aim ||= now.modes.includes('aim')
     seen.arrows ||= now.arrows > 0
   }
-  expect(seen).toEqual({ boar: true, archer: true, windup: true, aim: true, arrows: true })
+  expect(seen).toEqual({ boar: true, archer: true, knight: true, moth: true, windup: true, aim: true, arrows: true })
   await expect(page.locator('#clock')).toHaveText(/^00:[0-5]\d$/)
   await expect(page.locator('footer')).toContainText('Thorn Boar')
   await expect(page.locator('footer')).toContainText('Court Archer')
+  await expect(page.locator('footer')).toContainText('Stone Knight')
+  await expect(page.locator('footer')).toContainText('Healer Moth')
   await expect(page.locator('footer')).toContainText('Lamp oil')
   expect(errors).toEqual([])
 })
@@ -381,7 +385,7 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
       await playRun(page, true, 12_000)
       await page.evaluate((armor: number) => {
         const { battle } = (window as any).arena
-        battle.elapsed = 298.5
+        battle.elapsed = 538.5
         battle.armor = armor
       }, won ? 3 : 1)
       await playRun(page, false, 2500)
@@ -438,7 +442,7 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
     const level = await page.locator('#level').innerText()
     expect(report).toContain('Level reached: ' + level)
     expect(report).toContain('Spells: Witchfire')
-    if (duel) expect(time).toMatch(/^05:[0-2]\d$/)
+    if (duel) expect(time).toMatch(/^09:[0-2]\d$/)
     if (won) {
       expect(report).not.toContain('The watch ended')
       await expect(page.locator('#clock')).toHaveText('0%')
@@ -456,7 +460,7 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
     await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
     await expect(page.getByRole('heading', { name: 'У часовни' })).toBeVisible()
     await expect(page.locator('#clock-label')).toHaveText('ДО РАССВЕТА')
-    await expect(page.locator('#clock')).toHaveText('05:00')
+    await expect(page.locator('#clock')).toHaveText('09:00')
     await expect(page.locator('#kills')).toHaveText('00')
     await expect(page.locator('#level')).toHaveText('1')
     await expect(page.locator('#slots [role=listitem]')).toHaveText(['Ведьмин огонь', '—', '—'])

@@ -481,3 +481,38 @@ export function reliquaryTexture() {
     circle(p, 22, 24, 3, '#2a1c18')
   })
 }
+
+export function knightTexture() {
+  return texture(72, 72, p => {
+    p.translate(36, 36)
+    circle(p, -3, 3, 27, '#1d1a22')
+    // Broad stone pauldrons, a tower shield held forward and a slit helm.
+    polygon(p, [[-20,-22],[-2,-26],[10,-18],[10,18],[-2,26],[-20,22],[-26,0]], '#6f6a72')
+    polygon(p, [[-14,-16],[-2,-19],[6,-13],[6,13],[-2,19],[-14,16],[-18,0]], '#8d8790')
+    circle(p, -2, 0, 10, '#a39da6')
+    box(p, 2, -5, 5, 10, '#2a2530')
+    polygon(p, [[12,-22],[24,-17],[27,0],[24,17],[12,22]], '#55505a')
+    polygon(p, [[15,-16],[22,-12],[24,0],[22,12],[15,16]], '#7b7580')
+    box(p, 17, -1, 6, 2, '#c9a05a')
+    for (const y of [-20, 20]) circle(p, -16, y, 3, '#4a4650')
+  })
+}
+
+export function mothTexture() {
+  return texture(48, 48, p => {
+    const glow = p.createRadialGradient(24, 24, 2, 24, 24, 24)
+    glow.addColorStop(0, '#ffe08a55')
+    glow.addColorStop(1, '#ffe08a00')
+    p.fillStyle = glow
+    p.fillRect(0, 0, 48, 48)
+    p.translate(24, 24)
+    // Pale dusty wings and a small golden body.
+    for (const side of [-1, 1]) {
+      polygon(p, [[2,side*2],[-6,side*18],[-18,side*16],[-12,side*4]], '#e9dcc0')
+      polygon(p, [[2,side*2],[10,side*14],[16,side*8],[8,side*1]], '#f6ecd6')
+      circle(p, -10, side*11, 3, '#c9a05a')
+    }
+    polygon(p, [[-10,0],[-2,-3],[10,0],[-2,3]], '#e7bd78')
+    circle(p, 10, 0, 2.5, '#fff0b8')
+  })
+}

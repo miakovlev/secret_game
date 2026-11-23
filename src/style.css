@@ -409,6 +409,19 @@ footer span {
   background: #a9efd9;
   box-shadow: 0 0 6px #3f8f86;
 }
+.knight-dot {
+  width: 11px;
+  height: 11px;
+  background: #8d8790;
+  border: 2px solid #55505a;
+}
+.moth-dot {
+  width: 11px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f6ecd6;
+  box-shadow: 0 0 6px #e7bd78;
+}
 .ember-dot {
   width: 7px;
   height: 7px;

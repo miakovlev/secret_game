@@ -40,6 +40,8 @@ const en = {
   },
   boar: 'Thorn Boar',
   archer: 'Court Archer',
+  knight: 'Stone Knight',
+  moth: 'Healer Moth',
   oil: 'Lamp oil',
   ember: 'Ember',
   slots: 'Spells',
@@ -52,7 +54,7 @@ const en = {
   },
   ready: {
     label: 'THE FIRST VIGIL', title: 'Until first light',
-    message: 'Hold the court for five minutes, then break the seal-flower in the throne garden and strike the Duchess while her crown is open.',
+    message: 'Hold the court for nine minutes, then break the seal-flower in the throne garden and strike the Duchess while her crown is open.',
     action: 'Start run',
   },
   paused: {
@@ -138,6 +140,8 @@ const ru: typeof en = {
   },
   boar: 'Терновый вепрь',
   archer: 'Придворный лучник',
+  knight: 'Каменный рыцарь',
+  moth: 'Моль-целительница',
   oil: 'Лампадное масло',
   ember: 'Уголёк',
   slots: 'Заклинания',
@@ -150,7 +154,7 @@ const ru: typeof en = {
   },
   ready: {
     label: 'ПЕРВЫЙ ДОЗОР', title: 'До первых лучей',
-    message: 'Продержись пять минут, затем разбей цветок-печать в тронном саду и бей Княгиню, пока её венец раскрыт.',
+    message: 'Продержись девять минут, затем разбей цветок-печать в тронном саду и бей Княгиню, пока её венец раскрыт.',
     action: 'Начать забег',
   },
   paused: {

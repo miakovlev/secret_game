@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, relicIds, relicRule,
+import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
   relics, seedRule, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
@@ -552,14 +552,16 @@ test('a wave sends its group once at its start and then on its own beat until it
 })
 
 test('at a wave boundary survivors stay and each new group enters exactly once', () => {
-  const b = runAt(240)
+  const packWave = waves.find(wave => !wave.every && wave.count > 1)
+  const bell = packWave.from
+  const b = runAt(bell)
   const survivor = makeFoe('boar', b.player.x + 900, b.player.y, 0, 1e9)
   b.foes.push(survivor)
   advance(b, 2)
   assert.deepEqual(b.foes, [survivor])
   while (b.foes.length === 1) b.step(1 / 60, 0, 0)
-  assert.ok(b.elapsed >= 240 && b.elapsed < 240.02)
-  const starting = waves.filter(wave => wave.from === 240)
+  assert.ok(b.elapsed >= bell && b.elapsed < bell + 0.02)
+  const starting = waves.filter(wave => wave.from === bell)
   const expected = starting.reduce((sum, wave) => sum + wave.count, 0)
   assert.ok(starting.some(wave => wave.count > 1))
   assert.equal(b.foes.length, 1 + expected)
@@ -579,9 +581,10 @@ test('a whole run sends in exactly the groups the schedule lists', () => {
   b.spells.witchfire.range = 0
   b.armor = Infinity
   const seen = new Set()
-  const entered = { briarling: 0, boar: 0, archer: 0 }
-  while (b.stage === 'court') {
-    b.step(1 / 30, 0, 0)
+  const entered = { briarling: 0, marked: 0, boar: 0, archer: 0, knight: 0, moth: 0 }
+  let bells = 0
+  while (b.elapsed < run.duration + 5) {
+    bells += b.step(1 / 30, 0, 0).filter(event => event.type === 'garden').length
     for (const foe of b.foes) {
       if (seen.has(foe) || !(foe.kind in entered)) continue
       seen.add(foe)
@@ -602,6 +605,11 @@ test('a whole run sends in exactly the groups the schedule lists', () => {
   }
   const first = kind => Math.min(...waves.filter(wave => wave.kind === kind).map(wave => wave.from))
   assert.ok(first('briarling') < first('boar') && first('boar') < first('archer'))
+  assert.ok(first('archer') < first('knight') && first('knight') <= first('moth'))
+  // The garden opens exactly once, when the nine minutes are up.
+  assert.equal(bells, 1)
+  assert.equal(b.stage, 'garden')
+  assert.equal(run.duration, 540)
 })
 
 test('after a pause the schedule continues from the same second', () => {
@@ -610,7 +618,7 @@ test('after a pause the schedule continues from the same second', () => {
     b.phase = 'playing'
     b.spells.witchfire.range = 0
     b.armor = Infinity
-    b.elapsed = 58
+    b.elapsed = waves.find(wave => wave.kind === 'boar').from - 2
     for (let frame = 0; frame < 300; frame++) {
       if (frame === pauseAt) {
         b.phase = 'paused'
@@ -1418,4 +1426,97 @@ test('relics go with the hero into the garden; a reliquary left behind is lost; 
   assert.deepEqual(fresh.relics, {})
   assert.deepEqual(fresh.reliquaries, [])
   assert.equal(fresh.chests, 0)
+})
+
+// --- Step 3.3: stone knights, healer moths and the nine-minute schedule.
+
+test('a stone knight is slow, very tough and worth a rich ember', () => {
+  assert.ok(foes.knight.health > 2 * foes.marked.health)
+  assert.ok(foes.knight.speed < foes.briarling.speed)
+  assert.ok(foes.knight.ember > foes.boar.ember)
+  const { b, foe, step } = duel('knight', 300)
+  step(60)
+  assert.ok(Math.abs(300 - (foe.x - b.player.x) - foes.knight.speed) < 1e-6)
+  assert.equal(foe.full, 1e9)
+})
+
+// A quiet court with one healer moth and the given wounded foes around it.
+function ward(patients) {
+  const b = runAt(1)
+  const moth = makeFoe('moth', b.player.x + mothHeal.keep - 20, b.player.y, 0, 12)
+  const others = patients.map(([kind, dx, lost, full = 100]) => {
+    const foe = makeFoe(kind, moth.x + dx, moth.y, 0, full)
+    foe.health = full - lost
+    return foe
+  })
+  b.foes = [moth, ...others]
+  const beat = () => {
+    const events = []
+    for (let i = 0; i < Math.round(mothHeal.beat * 60); i++) {
+      b.elapsed = 1
+      events.push(...b.step(1 / 60, 0, 0).filter(event => event.type === 'mend'))
+      b.foes = b.foes.filter(foe => foe === moth || others.includes(foe))
+    }
+    return events
+  }
+  return { b, moth, others, beat }
+}
+
+test('a healer moth mends the most wounded foe within its reach, one beat at a time', () => {
+  const { b, moth, others, beat } = ward([
+    ['knight', 100, 10], ['knight', -120, 40], ['boar', mothHeal.range + 40, 90], ['briarling', 60, 0, 5],
+  ])
+  const [scratched, hurt, far, whole] = others
+  const first = beat()
+  assert.deepEqual(first, [{ type: 'mend', from: { x: moth.x, y: moth.y }, to: { x: hurt.x, y: hurt.y } }])
+  assert.equal(hurt.health, 60 + mothHeal.amount)
+  assert.deepEqual([scratched.health, far.health, whole.health], [90, 10, 5])
+
+  // It keeps to whoever is worst off, and never mends beyond the health a foe came in with.
+  for (let i = 0; i < 12; i++) beat()
+  assert.equal(hurt.health, 100)
+  assert.equal(scratched.health, 100)
+  assert.equal(far.health, 10)
+  assert.deepEqual(beat(), [])
+  assert.equal(b.armor, Infinity)
+})
+
+test('a moth does not mend itself or other moths, and the mending stops when it falls', () => {
+  const { b, moth, others, beat } = ward([['moth', 80, 6, 12], ['knight', 90, 50]])
+  const [sister, knight] = others
+  sister.timer = 1e9
+  moth.health = 4
+  beat()
+  assert.equal(sister.health, 6)
+  assert.equal(moth.health, 4)
+  assert.equal(knight.health, 50 + mothHeal.amount)
+
+  // The warden's fire reaches the moth; once it is gone the knight stays wounded.
+  b.spells.witchfire.range = 2000
+  moth.health = 0.1
+  knight.health = 50
+  b.player = { x: moth.x - 30, y: moth.y }
+  b.elapsed = 1
+  b.step(1 / 60, 0, 0)
+  assert.ok(!b.foes.includes(moth))
+  b.spells.witchfire.range = 0
+  b.foes = [knight]
+  knight.health = 50
+  for (let i = 0; i < 240; i++) {
+    b.elapsed = 1
+    assert.deepEqual(b.step(1 / 60, 0, 0).filter(event => event.type === 'mend'), [])
+    b.foes = [knight]
+  }
+  assert.equal(knight.health, 50)
+})
+
+test('a moth hangs back at its distance instead of charging in', () => {
+  const far = duel('moth', mothHeal.keep + 150)
+  far.step(240)
+  assert.ok(Math.abs(far.foe.x - far.b.player.x - mothHeal.keep) < 4)
+  const near = duel('moth', 40)
+  near.step(240)
+  const gap = near.foe.x - near.b.player.x
+  assert.ok(gap >= mothHeal.keep - 62 && gap <= mothHeal.keep)
+  assert.equal(near.b.armor, MAX_ARMOR)
 })
