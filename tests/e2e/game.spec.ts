@@ -96,16 +96,16 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
   // Every briarling enters from the same spot, so the embers pile up up-left of the warden.
   await page.evaluate(() => { Math.random = () => 0.05 })
   await page.getByRole('button', { name: 'Start run' }).click()
-  await page.clock.runFor(20_000)
+  await page.clock.runFor(9_500)
   expect(Number(await page.locator('#kills').innerText())).toBeGreaterThan(4)
   await expect(page.locator('#level')).toHaveText('1')
   await expect(page.getByRole('progressbar', { name: 'Experience 0 of 5' })).toBeVisible()
 
   await page.keyboard.down('ArrowLeft')
-  await page.clock.runFor(860)
+  await page.clock.runFor(620)
   await page.keyboard.up('ArrowLeft')
   await page.keyboard.down('ArrowUp')
-  await page.clock.runFor(300)
+  await page.clock.runFor(270)
   await page.keyboard.up('ArrowUp')
   await expect(page.locator('#level')).toHaveText(/^[2-9]$/)
   await expect(page.getByRole('progressbar', { name: /^Experience \d+ of [7-9]/ })).toBeVisible()
@@ -163,8 +163,8 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
 })
 
 // Plays a whole run in small slices. Whenever cards are offered it learns a new spell,
-// or else takes a damage or rate upgrade. A patrolling warden walks to the ember pile
-// and back, which is enough to win.
+// or else takes a damage or rate upgrade. A patrolling warden walks a wide loop around
+// the court, which keeps the briarlings behind and is enough to win.
 async function playRun(page: Page, patrol: boolean) {
   let held: string | undefined
   let picks = 0
@@ -178,12 +178,13 @@ async function playRun(page: Page, patrol: boolean) {
       if (held) await page.keyboard.up(held)
       held = undefined
       const texts = await page.locator('#choices button').allInnerTexts()
-      const wanted = ['Moon Blade', 'Funeral Toll', picks++ % 2 ? 'Quicker flame' : 'Hotter fire']
+      const wanted = ['Funeral Toll', 'Moon Blade', picks++ % 2 ? 'Quicker flame' : 'Hotter fire']
       const found = wanted.map(text => texts.findIndex(card => card.includes(text))).find(index => index >= 0)
       await page.locator('#choices button').nth(found ?? 0).click()
     }
-    const beat = ms % 2000
-    const key = !patrol || ms < 10_000 || beat >= 1200 ? undefined : beat < 600 ? 'ArrowLeft' : 'ArrowRight'
+    const beat = ms % 12_000
+    const key = !patrol ? undefined
+      : beat < 4500 ? 'ArrowLeft' : beat < 6000 ? 'ArrowDown' : beat < 10_500 ? 'ArrowRight' : 'ArrowUp'
     if (key !== held) {
       if (held) await page.keyboard.up(held)
       if (key) await page.keyboard.down(key)
@@ -204,8 +205,8 @@ for (const outcome of ['victory', 'defeat'] as const) {
     await page.getByRole('button', { name: 'Start run' }).click()
     const won = outcome === 'victory'
     const picks = await playRun(page, won)
-    expect(picks).toBeGreaterThan(won ? 2 : 0)
-    if (won) await expect(page.locator('#slots [role=listitem]')).toHaveText(['Witchfire', 'Moon Blade', 'Funeral Toll'])
+    expect(picks).toBeGreaterThan(won ? 1 : 0)
+    if (won) await expect(page.locator('#slots [role=listitem]')).toHaveText(['Witchfire', 'Funeral Toll', 'Moon Blade'])
     await expect(page.locator('#title')).toHaveText(won ? 'The chapel stands' : 'The briars prevail')
     const kills = Number(await page.locator('#kills').innerText())
     expect(kills).toBeGreaterThan(0)

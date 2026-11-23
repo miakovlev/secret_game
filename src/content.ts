@@ -1,5 +1,17 @@
 // Tunable game content. Rules read these tables and never hard-code the numbers.
 
+// The court is larger than the screen. The camera shows a `view`-sized part of
+// it around the warden. Landmarks are drawn now and come alive in later steps.
+export const court = {
+  width: 2000,
+  height: 1100,
+  view: { width: 1000, height: 490 },
+  // The gate to the throne garden, in the north wall.
+  gate: { x: 1000, y: 0 },
+  // The Gardener's grave, at the end of a side path.
+  grave: { x: 1780, y: 860 },
+}
+
 // Every spell shares one set of stats; a spell ignores the ones it has no use for.
 export type Stats = {
   cooldown: number
@@ -35,10 +47,15 @@ export const briarling = {
   health: 3,
   healthGrowth: 0.05,
   // Speed in pixels per second: base, random spread, and growth per second of the run.
-  speed: 53,
+  speed: 95,
   speedSpread: 15,
-  speedGrowth: 0.25,
+  speedGrowth: 0.6,
   ember: 1,
+  // Seconds between arrivals: the first gap, how much it shrinks per second
+  // of the run, and the shortest it gets.
+  gap: 0.8,
+  gapShrink: 0.009,
+  gapFloor: 0.31,
 }
 
 export const upgradeIds = [

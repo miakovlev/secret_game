@@ -1,11 +1,9 @@
 import {
-  briarling, leveling, loadout, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades,
+  briarling, court, leveling, loadout, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades,
 } from './content.ts'
 import type { SpellId, Stats, UpgradeId } from './content.ts'
 
 // Positions and speeds are expressed in arena pixels and seconds.
-export const WIDTH = 1000
-export const HEIGHT = 490
 export const DURATION = 60
 export const MAX_ARMOR = 5
 export const PICKUP_RADIUS = 48
@@ -34,7 +32,7 @@ export function xpGoal(level: number) {
 
 export class Battle {
   phase: Phase = 'ready'
-  player: Point = { x: 625, y: 244 }
+  player: Point = { x: court.width / 2, y: court.height / 2 }
   facing = 0
   foes: Foe[] = []
   embers: Ember[] = []
@@ -59,12 +57,25 @@ export class Battle {
     this.random = random
   }
 
+  // Top-left corner of the visible part of the court: centred on the warden
+  // and stopped by the walls.
+  camera(): Point {
+    const { width, height, view } = court
+    return {
+      x: Math.max(0, Math.min(width - view.width, this.player.x - view.width / 2)),
+      y: Math.max(0, Math.min(height - view.height, this.player.y - view.height / 2)),
+    }
+  }
+
+  // Foes step in just beyond an edge of the visible area, never inside it.
   private spawn() {
     const edge = Math.floor(this.random() * 4)
     const pos = this.random()
+    const { width, height } = court.view
+    const view = this.camera()
     const foe = {
-      x: edge === 0 ? -14 : edge === 1 ? WIDTH + 14 : pos * WIDTH,
-      y: edge === 2 ? -14 : edge === 3 ? HEIGHT + 14 : pos * HEIGHT,
+      x: view.x + (edge === 0 ? -14 : edge === 1 ? width + 14 : pos * width),
+      y: view.y + (edge === 2 ? -14 : edge === 3 ? height + 14 : pos * height),
       speed:
         briarling.speed +
         this.random() * briarling.speedSpread +
@@ -73,8 +84,8 @@ export class Battle {
     }
     // Leave room to react when the warden is patrolling an entry point.
     if (Math.hypot(foe.x - this.player.x, foe.y - this.player.y) < 150) {
-      if (edge < 2) foe.x = WIDTH - foe.x
-      else foe.y = HEIGHT - foe.y
+      if (edge < 2) foe.x = 2 * view.x + width - foe.x
+      else foe.y = 2 * view.y + height - foe.y
     }
     this.foes.push(foe)
   }
@@ -211,11 +222,11 @@ export class Battle {
       this.facing = Math.atan2(dy, dx)
       this.player.x = Math.max(
         22,
-        Math.min(WIDTH - 22, this.player.x + (160 * dt * dx) / length),
+        Math.min(court.width - 22, this.player.x + (160 * dt * dx) / length),
       )
       this.player.y = Math.max(
         22,
-        Math.min(HEIGHT - 22, this.player.y + (160 * dt * dy) / length),
+        Math.min(court.height - 22, this.player.y + (160 * dt * dy) / length),
       )
     }
     this.collect(events)
@@ -229,7 +240,10 @@ export class Battle {
     this.nextSpawn -= dt
     if (this.nextSpawn <= 0) {
       this.spawn()
-      this.nextSpawn += Math.max(0.34, 0.89 - this.elapsed * 0.009)
+      this.nextSpawn += Math.max(
+        briarling.gapFloor,
+        briarling.gap - this.elapsed * briarling.gapShrink,
+      )
     }
 
     this.immunity = Math.max(0, this.immunity - dt)

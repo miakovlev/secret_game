@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
-import { Battle, DURATION, HEIGHT, MAX_ARMOR, WIDTH, xpGoal } from './battle'
+import { Battle, DURATION, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Phase, Shot } from './battle'
-import { loadout } from './content'
+import { court, loadout } from './content'
 import { briarlingTexture, emberTexture, floorTexture, wardenTexture } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -97,11 +97,12 @@ class Arena extends Phaser.Scene {
     this.add.image(0, 0, 'floor').setOrigin(0)
     this.warden = this.add.image(0, 0, 'warden').setDepth(2)
     this.effects = this.add.graphics().setDepth(3)
-    this.battle.foes = [
-      { x: 756, y: 138, speed: 0, health: 1 },
-      { x: 815, y: 188, speed: 0, health: 1 },
-      { x: 713, y: 348, speed: 0, health: 1 },
-    ]
+    this.cameras.main.setBounds(0, 0, court.width, court.height)
+    // Three still briarlings pose beside the warden on the title screen.
+    const { x, y } = this.battle.player
+    this.battle.foes = [[131, -106], [190, -56], [88, 104]].map(([dx, dy]) => ({
+      x: x + dx, y: y + dy, speed: 0, health: 1,
+    }))
 
     const selectLanguage = (next: Language) => {
       language = next
@@ -195,6 +196,8 @@ class Arena extends Phaser.Scene {
 
   private renderBattle() {
     const b = this.battle
+    const view = b.camera()
+    this.cameras.main.setScroll(view.x, view.y)
     this.warden.setPosition(b.player.x, b.player.y).setRotation(b.facing)
     this.warden.setAlpha(
       b.immunity > 0 && Math.floor(b.immunity * 12) % 2 ? 0.45 : 1,
@@ -370,8 +373,8 @@ function shown(value: number) {
 new Phaser.Game({
   type: Phaser.CANVAS,
   parent: 'game',
-  width: WIDTH,
-  height: HEIGHT,
+  width: court.view.width,
+  height: court.view.height,
   backgroundColor: '#30352d',
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   audio: { noAudio: true },

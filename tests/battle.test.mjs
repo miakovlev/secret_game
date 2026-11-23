@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { briarling, loadout, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
+import { briarling, court, loadout, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
-import { Battle, DURATION, WIDTH, HEIGHT, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
+const { view } = court
+import { Battle, DURATION, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
 
 function playing(random = () => 0) {
   const battle = new Battle(random)
@@ -41,25 +42,85 @@ test('diagonal and axial movement cover the same distance and turn the warden', 
   }
 })
 
-test('movement stops at each arena boundary', () => {
+// A warden who can cross the whole court: no kills, so no level-up interrupts
+// the walk, and no amount of thorns ends it.
+function walker() {
   const b = playing()
-  // No kills, so no embers interrupt the walk with a level-up.
   b.spells.witchfire.range = 0
-  advance(b, 480, -1, -1)
+  b.armor = Infinity
+  return b
+}
+
+test('movement stops at each wall of the court', () => {
+  const b = walker()
+  advance(b, 600, -1, -1)
   assert.deepEqual(b.player, { x: 22, y: 22 })
-  advance(b, 540, 1, 1)
-  assert.deepEqual(b.player, { x: WIDTH - 22, y: HEIGHT - 22 })
+  advance(b, 1100, 1, 1)
+  assert.deepEqual(b.player, { x: court.width - 22, y: court.height - 22 })
+})
+
+test('the camera follows the warden and stops at the walls with the warden in frame', () => {
+  const b = walker()
+  assert.ok(court.width > view.width && court.height > view.height)
+  assert.deepEqual(b.camera(), { x: b.player.x - view.width / 2, y: b.player.y - view.height / 2 })
+  advance(b, 30, 1, 1)
+  assert.deepEqual(b.camera(), { x: b.player.x - view.width / 2, y: b.player.y - view.height / 2 })
+  const corners = { '-1': 0, 1: 1 }
+  for (const [dx, dy] of [[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, 0], [0, -1], [1, 0], [0, 1]]) {
+    // Each leg is long; keep the minute from running out mid-walk.
+    b.elapsed = 0
+    advance(b, 1100, dx, dy)
+    const camera = b.camera()
+    if (dx) assert.equal(camera.x, corners[dx] * (court.width - view.width))
+    if (dy) assert.equal(camera.y, corners[dy] * (court.height - view.height))
+    assert.ok(camera.x >= 0 && camera.x + view.width <= court.width)
+    assert.ok(camera.y >= 0 && camera.y + view.height <= court.height)
+    assert.ok(b.player.x > camera.x && b.player.x < camera.x + view.width)
+    assert.ok(b.player.y > camera.y && b.player.y < camera.y + view.height)
+  }
+})
+
+test('foes never appear inside the visible area, wherever the warden stands', () => {
+  let seed = 7
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  for (let run = 0; run < 400; run++) {
+    const b = new Battle(random)
+    b.phase = 'playing'
+    b.player = { x: 22 + random() * (court.width - 44), y: 22 + random() * (court.height - 44) }
+    b.step(0, 0, 0)
+    const [foe] = b.foes
+    const camera = b.camera()
+    const inside =
+      foe.x > camera.x && foe.x < camera.x + view.width &&
+      foe.y > camera.y && foe.y < camera.y + view.height
+    assert.ok(!inside, JSON.stringify({ foe, camera }))
+    assert.ok(Math.hypot(foe.x - b.player.x, foe.y - b.player.y) >= 150)
+  }
+})
+
+test('an ember left out of sight waits there and is collected on return', () => {
+  const b = walker()
+  const ember = { x: b.player.x + 30, y: b.player.y + PICKUP_RADIUS + 20, value: 1 }
+  b.embers = [ember]
+  advance(b, 300, -1, 0)
+  assert.ok(ember.x > b.camera().x + view.width)
+  assert.deepEqual(b.embers, [ember])
+  advance(b, 300, 1, 0)
+  assert.deepEqual(b.embers, [ember])
+  advance(b, 20, 0, 1)
+  assert.deepEqual(b.embers, [])
+  assert.equal(b.xp, 1)
 })
 
 for (const [edge, roll, axis, outside] of [
-  ['left', 0, 'x', -14], ['right', .25, 'x', WIDTH + 14],
-  ['top', .5, 'y', -14], ['bottom', .75, 'y', HEIGHT + 14],
+  ['left', 0, 'x', -14], ['right', .25, 'x', view.width + 14],
+  ['top', .5, 'y', -14], ['bottom', .75, 'y', view.height + 14],
 ]) {
-  test('foes enter from the ' + edge + ' and chase the player', () => {
+  test('foes enter just beyond the ' + edge + ' edge of the view and chase the player', () => {
     const b = playing(() => roll)
     b.step(0, 0, 0)
     const foe = b.foes[0]
-    assert.equal(foe[axis], outside)
+    assert.equal(foe[axis], b.camera()[axis] + outside)
     const distance = () => Math.hypot(foe.x - b.player.x, foe.y - b.player.y)
     const before = distance()
     advance(b, 20)
@@ -69,8 +130,8 @@ for (const [edge, roll, axis, outside] of [
 
 test('nearby horizontal and vertical entry points move to the opposite side', () => {
   for (const [roll, player, axis, expected] of [
-    [0, { x: 22, y: 22 }, 'x', WIDTH + 14],
-    [.5, { x: WIDTH / 2, y: 22 }, 'y', HEIGHT + 14],
+    [0, { x: 22, y: 22 }, 'x', view.width + 14],
+    [.5, { x: court.width / 2, y: 22 }, 'y', view.height + 14],
   ]) {
     const b = playing(() => roll)
     b.player = player
