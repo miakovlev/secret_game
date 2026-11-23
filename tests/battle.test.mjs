@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, seedRule, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
+import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, relicIds, relicRule,
+  relics, seedRule, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
 const briarling = foes.briarling
@@ -1185,4 +1186,236 @@ test('new spells stay out of the duel until learned and seeds do not follow into
   advance(b, 240)
   assert.equal(lady.health, foes.duchess.health)
   assert.equal(b.seeds.length, 1)
+})
+
+// --- Step 3.2: the marked briarling, reliquaries and relics.
+
+// A quiet run with a reliquary lying at the hero's feet.
+function atChest(random = () => 0.5, held = {}) {
+  const b = playing(random)
+  b.spells.witchfire.range = 0
+  Object.assign(b.relics, held)
+  b.reliquaries = [{ ...b.player }]
+  const events = b.step(1 / 60, 0, 0)
+  return { b, events }
+}
+
+test('a marked briarling walks in on schedule, is tougher, and drops one reliquary when it falls', () => {
+  const wave = waves.find(entry => entry.kind === 'marked')
+  assert.ok(wave && wave.every && wave.from > 0)
+  assert.ok(foes.marked.health > 5 * foes.briarling.health)
+  const b = runAt(wave.from)
+  advance(b, 6)
+  const marked = b.foes.filter(foe => foe.kind === 'marked')
+  assert.equal(marked.length, 1)
+  assert.ok(marked[0].health >= foes.marked.health)
+
+  const fight = playing(() => 0.5)
+  const elite = makeFoe('marked', fight.player.x + 100, fight.player.y, 0, 0.1)
+  const plain = makeFoe('briarling', fight.player.x + 120, fight.player.y, 0, 0.1)
+  fight.foes = [elite, plain]
+  const first = fight.step(0, 0, 0)
+  assert.deepEqual(first.map(event => event.type), ['shot', 'kill', 'chest'])
+  assert.deepEqual(first[2], { type: 'chest', at: { x: elite.x, y: elite.y } })
+  assert.deepEqual(fight.reliquaries, [{ x: elite.x, y: elite.y }])
+  assert.equal(fight.embers[0].value, foes.marked.ember)
+  fight.timers.witchfire = 0
+  assert.deepEqual(fight.step(0, 0, 0).map(event => event.type), ['shot', 'kill'])
+  assert.equal(fight.reliquaries.length, 1)
+})
+
+test('a reliquary waits to be reached, opens once and offers distinct new relics', () => {
+  const b = playing(() => 0.5)
+  b.spells.witchfire.range = 0
+  const chest = { x: b.player.x + PICKUP_RADIUS + 70, y: b.player.y }
+  b.reliquaries = [chest]
+  advance(b, 20)
+  assert.deepEqual(b.reliquaries, [chest])
+  assert.equal(b.phase, 'playing')
+  const events = []
+  for (let i = 0; i < 40 && b.phase === 'playing'; i++) events.push(...b.step(1 / 60, 1, 0))
+  assert.deepEqual(events, [{ type: 'open', at: chest }])
+  assert.equal(b.phase, 'choosing')
+  assert.ok(b.openingChest)
+  assert.deepEqual(b.reliquaries, [])
+  assert.equal(b.chests, 1)
+  assert.equal(b.offer.length, relicRule.cards)
+  assert.equal(new Set(b.offer.map(card => card.relic)).size, relicRule.cards)
+  for (const card of b.offer) {
+    assert.equal(card.kind, 'relic')
+    assert.ok(relicIds.includes(card.relic))
+    assert.equal(card.level, 1)
+  }
+
+  // Frozen until a relic is taken; one choice takes exactly one.
+  const before = JSON.stringify(b)
+  advance(b, 60, 1, 1)
+  assert.equal(JSON.stringify(b), before)
+  const taken = b.offer[1].relic
+  b.choose(1)
+  b.choose(1)
+  assert.equal(b.phase, 'playing')
+  assert.deepEqual(b.relics, { [taken]: 1 })
+  assert.equal(b.chests, 0)
+  assert.ok(!b.openingChest)
+  assert.deepEqual(b.offer, [])
+  // The run goes on without another reliquary appearing from nowhere.
+  advance(b, 30)
+  assert.equal(b.phase, 'playing')
+})
+
+test('taking a relic again raises its level up to the maximum', () => {
+  let level = 0
+  while (level < relicRule.maxLevel) {
+    const { b } = atChest(() => 0, level ? { boots: level } : {})
+    const card = b.offer.find(entry => entry.relic === 'boots')
+    assert.deepEqual(card, { kind: 'relic', relic: 'boots', level: level + 1 })
+    b.choose(b.offer.indexOf(card))
+    level = b.rank('boots')
+  }
+  assert.equal(level, relicRule.maxLevel)
+  const { b } = atChest(() => 0, { boots: relicRule.maxLevel })
+  assert.ok(b.offer.length > 0)
+  assert.ok(b.offer.every(card => card.relic !== 'boots'))
+})
+
+test('with every relic slot taken only held relics that can still grow are offered', () => {
+  for (const roll of [0, 0.5, 0.99]) {
+    const { b } = atChest(() => roll, { boots: 1, cloak: relicRule.maxLevel, ring: 2 })
+    assert.equal(Object.keys(b.relics).length, relicRule.slots)
+    assert.deepEqual(b.offer.map(card => card.relic).sort(), ['boots', 'ring'])
+    assert.deepEqual(b.offer.find(card => card.relic === 'ring'), { kind: 'relic', relic: 'ring', level: 3 })
+    b.choose(0)
+    assert.equal(Object.keys(b.relics).length, relicRule.slots)
+    assert.equal(b.phase, 'playing')
+  }
+})
+
+test('a reliquary with nothing left to give mends a pip instead of stopping the run', () => {
+  const full = { boots: relicRule.maxLevel, cloak: relicRule.maxLevel, ring: relicRule.maxLevel }
+  const b = playing(() => 0.5)
+  b.spells.witchfire.range = 0
+  Object.assign(b.relics, full)
+  b.armor = 2
+  b.reliquaries = [{ ...b.player }, { ...b.player }]
+  const events = b.step(1 / 60, 0, 0)
+  assert.deepEqual(events.map(event => event.type), ['open', 'open'])
+  assert.equal(b.phase, 'playing')
+  assert.equal(b.armor, 4)
+  assert.equal(b.chests, 0)
+  assert.deepEqual(b.relics, full)
+  // Never past the maximum.
+  b.armor = b.maxArmor
+  b.reliquaries = [{ ...b.player }]
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.armor, b.maxArmor)
+})
+
+test('a reliquary and a level-up in the same step give two sets of cards, the relics first', () => {
+  const b = playing(() => 0.5)
+  b.spells.witchfire.range = 0
+  b.reliquaries = [{ ...b.player }]
+  b.embers = [{ ...b.player, value: xpGoal(1) }]
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.phase, 'choosing')
+  assert.ok(b.openingChest)
+  assert.ok(b.offer.every(card => card.kind === 'relic'))
+  b.choose(0)
+  assert.equal(b.phase, 'choosing')
+  assert.ok(!b.openingChest)
+  assert.equal(b.choiceLevel, 2)
+  assert.ok(b.offer.every(card => card.kind !== 'relic'))
+  b.choose(0)
+  assert.equal(b.phase, 'playing')
+  assert.equal(Object.keys(b.relics).length, 1)
+})
+
+test('courier shoes quicken the hero and amber beads widen the reach', () => {
+  const walked = level => {
+    const b = playing()
+    if (level) b.relics.boots = level
+    const start = b.player.x
+    advance(b, 60, 1, 0)
+    return b.player.x - start
+  }
+  assert.ok(Math.abs(walked(0) - heroes.warden.speed) < 1e-8)
+  assert.ok(Math.abs(walked(1) - heroes.warden.speed * (1 + relics.boots.amount)) < 1e-8)
+  assert.ok(Math.abs(walked(3) - heroes.warden.speed * (1 + 3 * relics.boots.amount)) < 1e-8)
+
+  const gathered = level => {
+    const b = playing()
+    b.spells.witchfire.range = 0
+    if (level) b.relics.beads = level
+    b.embers = [{ x: b.player.x + PICKUP_RADIUS + 30, y: b.player.y, value: 1 }]
+    b.reliquaries = [{ x: b.player.x, y: b.player.y + PICKUP_RADIUS + 30 }]
+    b.step(1 / 60, 0, 0)
+    return [b.xp, b.chests]
+  }
+  assert.ok(relics.beads.amount > 30)
+  assert.deepEqual(gathered(0), [0, 0])
+  assert.deepEqual(gathered(1), [1, 1])
+})
+
+test('the pilgrim cloak adds a whole pip that oil can refill', () => {
+  const { b } = atChest(() => 0, { cloak: 1 })
+  assert.equal(b.maxArmor, MAX_ARMOR + 1)
+  b.armor = 3
+  const card = b.offer.find(entry => entry.relic === 'cloak')
+  b.choose(b.offer.indexOf(card))
+  assert.equal(b.maxArmor, MAX_ARMOR + 2)
+  assert.equal(b.armor, 4)
+  b.oils = Array.from({ length: 6 }, () => ({ ...b.player }))
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.armor, MAX_ARMOR + 2)
+  assert.equal(b.oils.length, 3)
+  assert.equal(new Battle().maxArmor, MAX_ARMOR)
+})
+
+test('the hourglass shortens every cooldown and the gardener ring lengthens every reach', () => {
+  const b = playing()
+  for (const spell of ['moonblade', 'toll', 'seeds', 'fireflies']) learn(b, spell)
+  for (const id of b.loadout) assert.deepEqual(b.stats(id), spells[id])
+  b.relics.hourglass = 2
+  b.relics.ring = 3
+  for (const id of b.loadout) {
+    const tuned = b.stats(id)
+    assert.ok(Math.abs(tuned.cooldown - spells[id].cooldown * (1 - 2 * relics.hourglass.amount)) < 1e-9)
+    assert.ok(Math.abs(tuned.range - spells[id].range * (1 + 3 * relics.ring.amount)) < 1e-9)
+    assert.equal(tuned.damage, spells[id].damage)
+    // The spell itself is untouched, so cards keep showing its own numbers.
+    assert.deepEqual(b.spells[id], spells[id])
+  }
+
+  const fight = held => {
+    const battle = playing()
+    Object.assign(battle.relics, held)
+    const foe = dummy(battle, witchfire.range + 10)
+    let shots = 0
+    for (let i = 0; i < 120; i++) {
+      shots += battle.step(1 / 60, 0, 0).filter(event => event.type === 'shot').length
+      battle.foes = [foe]
+    }
+    return shots
+  }
+  assert.equal(fight({}), 0)
+  const reach = fight({ ring: 1 })
+  assert.ok(reach > 0)
+  assert.ok(fight({ ring: 1, hourglass: 2 }) > reach)
+})
+
+test('relics go with the hero into the garden; a reliquary left behind is lost; a new run has none', () => {
+  const b = playing()
+  b.relics = { boots: 2, cloak: 1 }
+  b.armor = 6
+  b.reliquaries = [{ x: 50, y: 50 }]
+  b.elapsed = DURATION
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.stage, 'garden')
+  assert.deepEqual(b.relics, { boots: 2, cloak: 1 })
+  assert.equal(b.armor, 6)
+  assert.deepEqual(b.reliquaries, [])
+  const fresh = new Battle()
+  assert.deepEqual(fresh.relics, {})
+  assert.deepEqual(fresh.reliquaries, [])
+  assert.equal(fresh.chests, 0)
 })

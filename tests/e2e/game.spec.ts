@@ -142,7 +142,7 @@ test('walking to the embers of banished briarlings earns a level', async ({ page
   await expect(page.locator('#cards')).toBeHidden()
   await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
   await expect(slots).toHaveText(['Ведьмин огонь', 'Погребальный звон', '—'])
-  await expect(page.getByRole('listitem', { name: 'Пустая ячейка' })).toHaveCount(1)
+  await expect(page.locator('#slots').getByRole('listitem', { name: 'Пустая ячейка' })).toHaveCount(1)
   await page.clock.runFor(1500)
   await expect(page.locator('#clock')).not.toHaveText(time)
   // Keep circling the spot where briarlings fall until the next ember fills the bar.
@@ -262,6 +262,74 @@ test('the hero picked on the title screen sets the starting spell, and can be ch
   expect(errors).toEqual([])
 })
 
+test('a reliquary offers relics that fill their own slots, level up and last the whole run', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await frozenClock(page)
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  await page.getByRole('button', { name: 'Start run' }).click()
+  const relics = page.locator('#relics [role=listitem]')
+  const cards = page.locator('#choices button')
+  await expect(relics).toHaveText(['—', '—', '—'])
+  // A marked briarling has just fallen at the warden's feet.
+  const dropChest = () => page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.reliquaries.push({ ...battle.player })
+  })
+  await dropChest()
+  await page.clock.runFor(200)
+  await expect(page.getByRole('heading', { name: 'Reliquary' })).toBeVisible()
+  await expect(page.locator('#cards-label')).toHaveText('A RELIQUARY OPENS')
+  await expect(page.locator('#status')).toHaveText('A RELIQUARY OPENS')
+  await expect(page.locator('#cards-message')).toContainText('Take one relic')
+  await expect(cards).toHaveCount(3)
+  await expect(cards.nth(0)).toContainText('New relic')
+  await expect(cards.nth(0)).toContainText('Courier’s Shoes')
+  await expect(cards.nth(1)).toContainText('Amber Beads')
+  await expect(cards.nth(2)).toContainText('Pilgrim’s Cloak')
+  await expect(cards.nth(2)).toContainText('One more pip of armor.')
+  await select(page, 'ru')
+  await expect(page.getByRole('heading', { name: 'Реликварий' })).toBeVisible()
+  await expect(cards.nth(2)).toContainText('Плащ паломника')
+  await expect(cards.nth(2)).toContainText('Новая реликвия')
+  await select(page, 'en')
+
+  // The cloak adds a whole pip and takes the first relic slot; spells keep theirs.
+  await cards.nth(2).click()
+  await expect(page.locator('#cards')).toBeHidden()
+  await expect(relics).toHaveText(['Pilgrim’s Cloak 1', '—', '—'])
+  await expect(page.getByRole('img', { name: 'Armor 6 of 6' })).toBeVisible()
+  await expect(page.locator('#armor i')).toHaveCount(6)
+  await expect(page.locator('#slots [role=listitem]')).toHaveText(['Witchfire', '—', '—'])
+
+  // The same relic from a second reliquary raises its level.
+  await dropChest()
+  await page.clock.runFor(200)
+  await expect(cards.nth(2)).toContainText('Pilgrim’s Cloak')
+  await expect(cards.nth(2)).toContainText('Level 2')
+  await page.keyboard.press('Digit3')
+  await expect(relics).toHaveText(['Pilgrim’s Cloak 2', '—', '—'])
+  await expect(page.getByRole('img', { name: 'Armor 7 of 7' })).toBeVisible()
+  await dropChest()
+  await page.clock.runFor(200)
+  await cards.nth(0).click()
+  await expect(relics).toHaveText(['Pilgrim’s Cloak 2', 'Courier’s Shoes 1', '—'])
+
+  // The relics are still there when the run ends, and gone when the next one starts.
+  await page.evaluate(() => { (window as any).arena.battle.armor = 1 })
+  await playRun(page, false, 150_000)
+  await expect(page.locator('#title')).toHaveText('The briars prevail')
+  await expect(page.locator('#message')).toContainText('Relics: Pilgrim’s Cloak 2, Courier’s Shoes 1.')
+  await select(page, 'ru')
+  await expect(page.locator('#message')).toContainText('Реликвии: Плащ паломника 2, Башмачки гонца 1.')
+  await expect(relics).toHaveText(['Плащ паломника 2', 'Башмачки гонца 1', '—'])
+  await page.getByRole('button', { name: 'Ещё раз' }).click()
+  await expect(relics).toHaveText(['—', '—', '—'])
+  await expect(page.getByRole('img', { name: 'Броня 5 из 5' })).toBeVisible()
+  await expect(page.locator('#armor i')).toHaveCount(5)
+  expect(errors).toEqual([])
+})
+
 test('boars and archers join the later waves and mark their attacks', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
@@ -376,7 +444,8 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
       await expect(page.locator('#clock')).toHaveText('0%')
     } else {
       expect(report).toContain(duel ? 'The watch ended in the throne garden.' : 'The watch ended in the chapel court.')
-      await expect(page.getByRole('img', { name: 'Armor 0 of 5' })).toBeVisible()
+      // The maximum may have grown if a pilgrim's cloak turned up on the way.
+      await expect(page.getByRole('img', { name: /^Armor 0 of \d$/ })).toBeVisible()
     }
 
     await select(page, 'ru')

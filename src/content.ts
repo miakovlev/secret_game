@@ -79,7 +79,7 @@ export const leveling = { first: 5, growth: 3 }
 // Seconds of waves before dawn.
 export const run = { duration: 300 }
 
-export const foeKinds = ['briarling', 'boar', 'archer', 'seal', 'duchess'] as const
+export const foeKinds = ['briarling', 'marked', 'boar', 'archer', 'seal', 'duchess'] as const
 export type FoeKind = (typeof foeKinds)[number]
 
 // Later foes are tougher and quicker: each value grows per second of the run.
@@ -97,7 +97,9 @@ type FoeStats = {
 
 export const foes: Record<FoeKind, FoeStats> = {
   // Crawls straight at the warden.
-  briarling: { health: 3, healthGrowth: 0.02, speed: 95, speedSpread: 15, speedGrowth: 0.05, reach: 18, ember: 1 },
+  briarling: { health: 3, healthGrowth: 0.03, speed: 95, speedSpread: 15, speedGrowth: 0.05, reach: 18, ember: 1 },
+  // A marked briarling: slower, much tougher, and it carries a reliquary.
+  marked: { health: 26, healthGrowth: 0.12, speed: 78, speedSpread: 8, speedGrowth: 0.04, reach: 22, ember: 3 },
   // Walks up, paws the ground, then charges down a marked lane.
   boar: { health: 16, healthGrowth: 0.08, speed: 70, speedSpread: 10, speedGrowth: 0.05, reach: 26, ember: 4 },
   // Stops at a distance, takes aim, then looses a volley along the aimed line.
@@ -134,6 +136,26 @@ export const archerVolley = {
   arrowSpeed: 330, arrowReach: 480, hit: 14,
 }
 
+// Relics are passive. A marked briarling drops a reliquary; opening it offers
+// up to `cards` relics. A hero holds `slots` different relics, and taking one
+// again raises its level up to `maxLevel`. `amount` is the gain per level.
+export const relicIds = ['boots', 'beads', 'cloak', 'hourglass', 'ring'] as const
+export type RelicId = (typeof relicIds)[number]
+export const relicRule = { slots: 3, maxLevel: 3, cards: 3 }
+
+export const relics: Record<RelicId, { amount: number }> = {
+  // Courier's shoes: share of movement speed added.
+  boots: { amount: 0.12 },
+  // Amber beads: pixels added to the pickup radius.
+  beads: { amount: 40 },
+  // Pilgrim's cloak: pips of armor added, each arriving whole.
+  cloak: { amount: 1 },
+  // Hourglass: share of every spell cooldown removed.
+  hourglass: { amount: 0.08 },
+  // Gardener's ring: share added to the reach of every spell.
+  ring: { amount: 0.1 },
+}
+
 // A banished foe sometimes leaves lamp oil that restores one pip of armor.
 export const oil = { chance: 0.04 }
 
@@ -144,17 +166,19 @@ export type Wave = { kind: FoeKind; from: number; count: number; to?: number; ev
 
 export const waves: Wave[] = [
   // 0:00–1:00 — briarlings alone.
-  { kind: 'briarling', from: 0, to: 60, every: 1.3, count: 1 },
+  { kind: 'briarling', from: 0, to: 60, every: 1.1, count: 1 },
+  // From 0:45 a marked briarling walks in now and then, carrying a reliquary.
+  { kind: 'marked', from: 45, to: 300, every: 70, count: 1 },
   // 1:00–2:30 — thorn boars join.
-  { kind: 'briarling', from: 60, to: 150, every: 1.05, count: 1 },
+  { kind: 'briarling', from: 60, to: 150, every: 0.9, count: 1 },
   { kind: 'boar', from: 60, to: 150, every: 10, count: 1 },
   // 2:30–4:00 — court archers join.
-  { kind: 'briarling', from: 150, to: 240, every: 0.9, count: 1 },
+  { kind: 'briarling', from: 150, to: 240, every: 0.77, count: 1 },
   { kind: 'archer', from: 150, to: 240, every: 9, count: 1 },
   { kind: 'boar', from: 155, to: 240, every: 15, count: 1 },
   // 4:00–5:00 — everything at once.
   { kind: 'briarling', from: 240, count: 8 },
-  { kind: 'briarling', from: 240, to: 300, every: 0.7, count: 1 },
+  { kind: 'briarling', from: 240, to: 300, every: 0.6, count: 1 },
   { kind: 'boar', from: 245, to: 300, every: 9, count: 1 },
   { kind: 'archer', from: 242, to: 300, every: 7, count: 2 },
 ]

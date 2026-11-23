@@ -368,6 +368,28 @@ footer span {
   background: #ff865e;
   transform: rotate(45deg);
 }
+.marked-dot {
+  width: 10px;
+  height: 10px;
+  background: #8a4f5e;
+  border: 2px solid #ffd27a;
+  transform: rotate(45deg);
+}
+.chest-dot {
+  width: 11px;
+  height: 9px;
+  background: #6b4230;
+  border-top: 3px solid #e7bd78;
+}
+.equipment.relics {
+  margin-left: 0;
+}
+.choices .relic {
+  border-bottom-color: #ffe08a;
+}
+.choices .relic span {
+  color: #cdd0c3;
+}
 .boar-dot {
   width: 11px;
   height: 11px;

@@ -442,3 +442,42 @@ export function sealTexture() {
     circle(p, 0, 0, 3, '#c9a05a')
   })
 }
+
+// A marked briarling: larger, darker, with a glowing sigil on its back.
+export function markedTexture() {
+  return texture(58, 58, p => {
+    p.translate(29, 29)
+    circle(p, -2, 2, 22, '#1d1a22')
+    p.scale(1.35, 1.35)
+    for (const side of [-1,1]) {
+      p.save()
+      p.scale(1,side)
+      polygon(p,[[-9,3],[-13,11],[-19,15],[-16,7],[-12,2]],'#7a4a52')
+      polygon(p,[[0,3],[5,12],[13,16],[10,8],[8,2]],'#8d5a5c')
+      polygon(p,[[-5,2],[-9,8],[-6,14],[-13,8]],'#63394a')
+      p.restore()
+    }
+    polygon(p,[[-15,0],[-8,-7],[0,-9],[8,-5],[13,0],[8,6],[0,9],[-9,6]],'#5a3344')
+    polygon(p,[[-13,0],[-2,-5],[6,-3],[2,0],[6,3],[-3,4]],'#8a4f5e')
+    polygon(p,[[-6,0],[-2,-4],[2,0],[-2,4]],'#ffd27a')
+    circle(p,7,-3,2,'#ffe08a')
+    circle(p,7,3,2,'#ffe08a')
+  })
+}
+
+export function reliquaryTexture() {
+  return texture(44, 44, p => {
+    const glow = p.createRadialGradient(22, 22, 2, 22, 22, 22)
+    glow.addColorStop(0, '#ffe08a88')
+    glow.addColorStop(1, '#ffe08a00')
+    p.fillStyle = glow
+    p.fillRect(0, 0, 44, 44)
+    // A small casket with a peaked lid, gilt bands and a keyhole.
+    polygon(p, [[9,18],[22,9],[35,18]], '#8a5a3a')
+    box(p, 9, 18, 26, 15, '#6b4230')
+    box(p, 9, 18, 26, 3, '#e7bd78')
+    box(p, 20, 9, 4, 24, '#e7bd78')
+    box(p, 9, 30, 26, 3, '#c9a05a')
+    circle(p, 22, 24, 3, '#2a1c18')
+  })
+}

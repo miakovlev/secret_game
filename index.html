@@ -48,9 +48,9 @@
             <button id="action" disabled>Loading arena…</button>
           </div>
           <div class="panel cards" id="cards" role="region" aria-labelledby="cards-title" hidden>
-            <span class="eyebrow" data-copy="chooseLabel">THE LANTERN FLARES</span>
+            <span class="eyebrow" id="cards-label">THE LANTERN FLARES</span>
             <h2 id="cards-title">Level 2</h2>
-            <p data-copy="chooseMessage">Choose how your lantern grows.</p>
+            <p id="cards-message">Choose how your lantern grows.</p>
             <div class="choices" id="choices"></div>
           </div>
         </div>
@@ -64,11 +64,14 @@
       <footer>
         <span><i class="warden-dot"></i><span id="hero-name">Dawn Warden</span></span>
         <span><i class="briarling-dot"></i><span data-copy="briarling">Briarling</span></span>
+        <span><i class="marked-dot"></i><span data-copy="marked">Marked Briarling</span></span>
+        <span><i class="chest-dot"></i><span data-copy="reliquary">Reliquary</span></span>
         <span><i class="boar-dot"></i><span data-copy="boar">Thorn Boar</span></span>
         <span><i class="archer-dot"></i><span data-copy="archer">Court Archer</span></span>
         <span><i class="ember-dot"></i><span data-copy="ember">Ember</span></span>
         <span><i class="oil-dot"></i><span data-copy="oil">Lamp oil</span></span>
         <span class="equipment"><span data-copy="slots">Spells</span><span class="slots" id="slots" role="list" data-label="slots" aria-label="Spells"></span></span>
+        <span class="equipment relics"><span data-copy="relicSlots">Relics</span><span class="slots" id="relics" role="list" data-label="relicSlots" aria-label="Relics"></span></span>
       </footer>
       <noscript>Enable JavaScript to play. <span lang="ru">Для игры включите JavaScript.</span></noscript>
     </main>

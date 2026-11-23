@@ -1,11 +1,13 @@
 import Phaser from 'phaser'
 import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Phase, Shot } from './battle'
-import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout } from './content'
-import type { HeroId } from './content'
+import {
+  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, relicRule,
+} from './content'
+import type { HeroId, RelicId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture, gardenTexture,
-  heroTexture, oilTexture, sealTexture,
+  heroTexture, markedTexture, oilTexture, reliquaryTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -32,6 +34,9 @@ const sector = document.querySelector<HTMLElement>('#sector')!
 const clockLabel = document.querySelector<HTMLElement>('#clock-label')!
 const heroList = document.querySelector<HTMLElement>('#heroes')!
 const heroName = document.querySelector<HTMLElement>('#hero-name')!
+const relicList = document.querySelector<HTMLElement>('#relics')!
+const cardsLabel = document.querySelector<HTMLElement>('#cards-label')!
+const cardsMessage = document.querySelector<HTMLElement>('#cards-message')!
 const directions = new Set([
   'KeyW',
   'KeyA',
@@ -92,6 +97,7 @@ class Arena extends Phaser.Scene {
   private foes: Phaser.GameObjects.Image[] = []
   private embers: Phaser.GameObjects.Image[] = []
   private oils: Phaser.GameObjects.Image[] = []
+  private chests: Phaser.GameObjects.Image[] = []
   private warnings!: Phaser.GameObjects.Graphics
   private effects!: Phaser.GameObjects.Graphics
   private flash?: { shot: Shot; life: number }
@@ -115,6 +121,8 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('boar', boarTexture())
     this.textures.addCanvas('archer', archerTexture())
     this.textures.addCanvas('oil', oilTexture())
+    this.textures.addCanvas('marked', markedTexture())
+    this.textures.addCanvas('reliquary', reliquaryTexture())
     // The running scene, for browser tests and for poking at it from the console.
     Object.assign(window, { arena: this })
     this.floor = this.add.image(0, 0, 'floor').setOrigin(0)
@@ -246,7 +254,7 @@ class Arena extends Phaser.Scene {
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
         const span = {
-          pickup: 0.25, heal: 0.45, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          pickup: 0.25, heal: 0.45, open: 0.5, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
@@ -380,6 +388,14 @@ class Arena extends Phaser.Scene {
       image.setVisible(!!drop)
       if (drop) image.setPosition(drop.x, drop.y)
     })
+    while (this.chests.length < b.reliquaries.length) {
+      this.chests.push(this.add.image(0, 0, 'reliquary').setDepth(0.6))
+    }
+    this.chests.forEach((image, index) => {
+      const chest = b.reliquaries[index]
+      image.setVisible(!!chest)
+      if (chest) image.setPosition(chest.x, chest.y).setScale(1 + 0.08 * Math.sin(b.elapsed * 5))
+    })
     while (this.embers.length < b.embers.length) {
       this.embers.push(this.add.image(0, 0, 'ember').setDepth(0.5))
     }
@@ -392,7 +408,7 @@ class Arena extends Phaser.Scene {
           .setScale(1 + 0.12 * Math.sin(b.elapsed * 6 + ember.x))
     })
     const g = this.effects.clear()
-    const flies = b.spells.fireflies
+    const flies = b.spells.fireflies && b.stats('fireflies')
     if (flies) {
       g.lineStyle(1, 0xd8f59a, 0.12)
       g.strokeCircle(b.player.x, b.player.y, flies.range)
@@ -428,6 +444,9 @@ class Arena extends Phaser.Scene {
       } else if (event.type === 'sting') {
         g.lineStyle(2, 0xd8f59a, fade)
         g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 10)
+      } else if (event.type === 'open') {
+        g.lineStyle(3, 0xffe08a, fade)
+        g.strokeCircle(event.at.x, event.at.y, 14 + (1 - fade) * 40)
       } else if (event.type === 'heal') {
         g.lineStyle(2.5, 0xa9efd9, fade)
         g.strokeCircle(b.player.x, b.player.y, 20 + (1 - fade) * 18)
@@ -483,9 +502,21 @@ class Arena extends Phaser.Scene {
       xp.setAttribute('aria-label', messages[language].xpValue(b.xp, goal))
       this.lastGrowth = growth
     }
-    const learned = b.loadout.join()
+    const learned = b.loadout.join() + JSON.stringify(b.relics)
     if (this.lastSlots !== learned) {
       const copy = messages[language]
+      const held = Object.entries(b.relics)
+      relicList.replaceChildren(
+        ...Array.from({ length: relicRule.slots }, (_, index) => {
+          const slot = document.createElement('span')
+          const relic = held[index]
+          slot.setAttribute('role', 'listitem')
+          slot.className = relic ? '' : 'empty'
+          slot.textContent = relic ? `${copy.relics[relic[0] as RelicId].name} ${relic[1]}` : '—'
+          if (!relic) slot.setAttribute('aria-label', copy.emptySlot)
+          return slot
+        }),
+      )
       slots.replaceChildren(
         ...Array.from({ length: loadout.slots }, (_, index) => {
           const slot = document.createElement('span')
@@ -499,12 +530,18 @@ class Arena extends Phaser.Scene {
       )
       this.lastSlots = learned
     }
-    if (this.lastArmor !== b.armor) {
-      Array.from(armor.children).forEach((pip, i) =>
-        pip.classList.toggle('lost', i >= b.armor),
+    // The pilgrim's cloak adds pips, so the row is rebuilt to the current maximum.
+    const pips = b.armor + b.maxArmor * 1000
+    if (this.lastArmor !== pips) {
+      armor.replaceChildren(
+        ...Array.from({ length: Math.min(b.maxArmor, 12) }, (_, i) => {
+          const pip = document.createElement('i')
+          pip.classList.toggle('lost', i >= b.armor)
+          return pip
+        }),
       )
-      armor.setAttribute('aria-label', messages[language].armorValue(b.armor, MAX_ARMOR))
-      this.lastArmor = b.armor
+      armor.setAttribute('aria-label', messages[language].armorValue(b.armor, b.maxArmor))
+      this.lastArmor = pips
     }
     if (this.lastPhase !== b.phase) {
       if (b.phase === 'choosing') this.keys.clear()
@@ -523,7 +560,11 @@ class Arena extends Phaser.Scene {
 
   private showCards() {
     const copy = messages[language]
-    cardsTitle.textContent = copy.levelTitle(this.battle.choiceLevel)
+    const chest = this.battle.openingChest
+    cardsLabel.textContent = chest ? copy.chestLabel : copy.chooseLabel
+    status.textContent = chest ? copy.chestLabel : copy.status.choosing
+    cardsTitle.textContent = chest ? copy.chestTitle : copy.levelTitle(this.battle.choiceLevel)
+    cardsMessage.textContent = chest ? copy.chestMessage : copy.chooseMessage
     choices.replaceChildren(
       ...this.battle.offer.map((card, index) => {
         const button = document.createElement('button')
@@ -531,17 +572,23 @@ class Arena extends Phaser.Scene {
         const group = document.createElement('em')
         const name = document.createElement('b')
         const detail = document.createElement('span')
-        const spell = copy.spells[card.spell]
         button.type = 'button'
         key.textContent = String(index + 1)
-        if (card.kind === 'learn') {
+        if (card.kind === 'relic') {
+          const relic = copy.relics[card.relic]
+          button.className = 'relic'
+          group.textContent = card.level === 1 ? copy.newRelic : copy.relicLevel(card.level)
+          name.textContent = relic.name
+          detail.textContent = relic.about
+        } else if (card.kind === 'learn') {
+          const spell = copy.spells[card.spell]
           button.className = 'learn'
           group.textContent = copy.newSpell
           name.textContent = spell.name
           detail.textContent = spell.about
         } else {
           const { title, stat } = copy.upgrades[card.id]
-          group.textContent = spell.name
+          group.textContent = copy.spells[card.spell].name
           name.textContent = title
           detail.textContent = `${stat} ${shown(card.from)} → ${shown(card.to)}`
         }
@@ -575,6 +622,9 @@ class Arena extends Phaser.Scene {
         copy.result(timeText(Math.floor(b.elapsed)), b.kills, b.level),
         copy.build(b.loadout.map(id => copy.spells[id].name).join(', ')),
         copy.heroLine(copy.heroes[b.hero].name),
+        ...(Object.keys(b.relics).length
+          ? [copy.relicLine(Object.entries(b.relics).map(([id, level]) => `${copy.relics[id as RelicId].name} ${level}`).join(', '))]
+          : []),
         ...(b.phase === 'lost' ? [copy.fell[b.stage]] : []),
       ].join(' ')
       action.textContent = copy.retry

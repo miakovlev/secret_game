@@ -1,8 +1,8 @@
 import {
-  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, leveling, loadout, oil, run, seedRule,
-  shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
+  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, leveling, loadout, oil, relicIds, relicRule,
+  relics, run, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
-import type { FoeKind, HeroId, SpellId, Stats, UpgradeId, Wave } from './content.ts'
+import type { FoeKind, HeroId, RelicId, SpellId, Stats, UpgradeId, Wave } from './content.ts'
 
 // Positions and speeds are expressed in arena pixels and seconds.
 export const DURATION = run.duration
@@ -36,6 +36,8 @@ export type BattleEvent =
   | { type: 'kill'; at: Point }
   | { type: 'pickup'; at: Point }
   | { type: 'heal'; at: Point }
+  | { type: 'chest'; at: Point }
+  | { type: 'open'; at: Point }
   | { type: 'arrow'; at: Point }
   | ({ type: 'chain' } & Shot)
   | { type: 'sow'; at: Point }
@@ -48,10 +50,12 @@ export type BattleEvent =
 // The run starts in the chapel court and ends in the throne garden.
 export type Stage = 'court' | 'garden'
 export type Phase = 'ready' | 'playing' | 'paused' | 'choosing' | 'won' | 'lost'
-// One level-up card: a new spell, or the shown value of a stat before and after.
+// One card: a new spell, the shown value of a spell stat before and after,
+// or a relic at the level it would reach.
 export type Choice =
   | { kind: 'learn'; spell: SpellId }
   | { kind: 'upgrade'; spell: SpellId; id: UpgradeId; from: number; to: number }
+  | { kind: 'relic'; relic: RelicId; level: number }
 
 // Experience needed to leave the given level.
 export function xpGoal(level: number) {
@@ -78,6 +82,10 @@ export class Battle {
   foes: Foe[] = []
   embers: Ember[] = []
   oils: Point[] = []
+  reliquaries: Point[] = []
+  // Relics held, in the order taken, with their levels; opened reliquaries awaiting a choice.
+  relics: Partial<Record<RelicId, number>> = {}
+  chests = 0
   arrows: Arrow[] = []
   xp = 0
   level = 1
@@ -218,13 +226,46 @@ export class Battle {
     }
   }
 
+  // How many levels of a relic the hero holds.
+  rank(id: RelicId) {
+    return this.relics[id] ?? 0
+  }
+
+  get maxArmor() {
+    return MAX_ARMOR + this.rank('cloak') * relics.cloak.amount
+  }
+
+  // A spell's stats as they play out with the relics held.
+  stats(id: SpellId): Stats {
+    const base = this.spells[id]!
+    return {
+      ...base,
+      cooldown: base.cooldown * (1 - this.rank('hourglass') * relics.hourglass.amount),
+      range: base.range * (1 + this.rank('ring') * relics.ring.amount),
+    }
+  }
+
+  private mend() {
+    this.armor = Math.min(this.maxArmor, this.armor + 1)
+  }
+
   private collect(events: BattleEvent[]) {
+    const reach = PICKUP_RADIUS + this.rank('beads') * relics.beads.amount
+    const near = (thing: Point) =>
+      Math.hypot(thing.x - this.player.x, thing.y - this.player.y) <= reach
+    // A reliquary opens once, when the hero walks up to it.
+    this.reliquaries = this.reliquaries.filter(chest => {
+      if (!near(chest)) return true
+      this.chests++
+      events.push({ type: 'open', at: chest })
+      return false
+    })
     this.embers = this.embers.filter(ember => {
       const distance = Math.hypot(
         ember.x - this.player.x,
         ember.y - this.player.y,
       )
-      if (distance > PICKUP_RADIUS) return true
+      if (distance > reach) return true
       this.xp += ember.value
       events.push({ type: 'pickup', at: { x: ember.x, y: ember.y } })
       while (this.xp >= xpGoal(this.level)) {
@@ -237,17 +278,44 @@ export class Battle {
     })
     // Lamp oil mends one pip and waits on the ground while the armor is whole.
     this.oils = this.oils.filter(drop => {
-      const distance = Math.hypot(drop.x - this.player.x, drop.y - this.player.y)
-      if (distance > PICKUP_RADIUS || this.armor >= MAX_ARMOR) return true
-      this.armor++
+      if (!near(drop) || this.armor >= this.maxArmor) return true
+      this.mend()
       events.push({ type: 'heal', at: drop })
       return false
     })
   }
 
+  // Lays out the next cards the hero has earned and tells whether there are
+  // any: reliquaries first, then level-ups.
+  private deal() {
+    while (this.chests) {
+      // Relics the hero may take: a new one while a slot is free, or a held
+      // one that can still grow.
+      const held = Object.keys(this.relics).length
+      const pool = relicIds.filter(id =>
+        this.rank(id) ? this.rank(id) < relicRule.maxLevel : held < relicRule.slots,
+      )
+      const cards: Choice[] = []
+      while (cards.length < relicRule.cards && pool.length) {
+        const [relic] = pool.splice(Math.floor(this.random() * pool.length), 1)
+        cards.push({ kind: 'relic', relic, level: this.rank(relic) + 1 })
+      }
+      if (cards.length) {
+        this.offer = cards
+        return true
+      }
+      // Nothing left to take: the reliquary mends a pip of armor instead.
+      this.chests--
+      this.mend()
+    }
+    if (!this.pending) return false
+    this.dealSpells()
+    return true
+  }
+
   // While a slot is free a few random unlearned spells lead the cards;
   // random upgrades of learned spells fill the rest.
-  private deal() {
+  private dealSpells() {
     const free = this.loadout.length < loadout.slots
     const unknown = spellIds.filter(spell => !this.spells[spell])
     const cards: Choice[] = []
@@ -271,6 +339,11 @@ export class Battle {
     this.offer = cards
   }
 
+  // Whether the cards on offer come from a reliquary rather than a level-up.
+  get openingChest() {
+    return this.chests > 0
+  }
+
   // The level the current set of cards belongs to.
   get choiceLevel() {
     return this.level - this.pending + 1
@@ -279,16 +352,21 @@ export class Battle {
   choose(index: number) {
     const card = this.offer[index]
     if (this.phase !== 'choosing' || !card) return
-    if (card.kind === 'learn') {
-      this.loadout.push(card.spell)
-      this.spells[card.spell] = { ...spells[card.spell] }
+    if (card.kind === 'relic') {
+      this.relics[card.relic] = card.level
+      // A new pip of the pilgrim's cloak arrives whole.
+      if (card.relic === 'cloak') this.mend()
+      this.chests--
     } else {
-      this.spells[card.spell] = upgraded(this.spells[card.spell]!, card.id)
+      if (card.kind === 'learn') {
+        this.loadout.push(card.spell)
+        this.spells[card.spell] = { ...spells[card.spell] }
+      } else {
+        this.spells[card.spell] = upgraded(this.spells[card.spell]!, card.id)
+      }
+      this.pending--
     }
-    this.pending--
-    if (this.pending) {
-      this.deal()
-    } else {
+    if (!this.deal()) {
       this.offer = []
       this.phase = 'playing'
     }
@@ -317,6 +395,7 @@ export class Battle {
     this.immunity = 1.5
     this.embers = []
     this.oils = []
+    this.reliquaries = []
     this.arrows = []
     this.seeds = []
     this.foes = [makeFoe('duchess', garden.duchess.x, garden.duchess.y, 0, foes.duchess.health)]
@@ -377,6 +456,10 @@ export class Battle {
       events.push({ type: 'crown', open: true })
     } else {
       this.embers.push({ ...fallen, value: foes[foe.kind].ember })
+      if (foe.kind === 'marked') {
+        this.reliquaries.push(fallen)
+        events.push({ type: 'chest', at: fallen })
+      }
       if (this.random() < oil.chance) this.oils.push(fallen)
     }
   }
@@ -417,7 +500,7 @@ export class Battle {
     const reach = (foe: Foe) => Math.hypot(foe.x - at.x, foe.y - at.y)
     for (const foe of this.foes) foe.stung = Math.max(0, foe.stung - dt)
     for (const id of this.loadout) {
-      const stats = this.spells[id]!
+      const stats = this.stats(id)
       if (id === 'seeds') this.burst(stats, dt, events)
       if (id === 'fireflies') {
         this.swarm(stats, dt, events)
@@ -493,21 +576,21 @@ export class Battle {
     }
     const area = this.stage === 'court' ? court : garden
     const length = Math.hypot(dx, dy)
+    const pace = heroes[this.hero].speed * (1 + this.rank('boots') * relics.boots.amount)
     if (length) {
       this.facing = Math.atan2(dy, dx)
       this.player.x = Math.max(
         22,
-        Math.min(area.width - 22, this.player.x + (heroes[this.hero].speed * dt * dx) / length),
+        Math.min(area.width - 22, this.player.x + (pace * dt * dx) / length),
       )
       this.player.y = Math.max(
         22,
-        Math.min(area.height - 22, this.player.y + (heroes[this.hero].speed * dt * dy) / length),
+        Math.min(area.height - 22, this.player.y + (pace * dt * dy) / length),
       )
     }
     this.collect(events)
-    if (this.pending) {
+    if (this.deal()) {
       // The run stands still until every earned card is chosen.
-      this.deal()
       this.phase = 'choosing'
       return events
     }
