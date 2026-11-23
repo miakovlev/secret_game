@@ -232,25 +232,70 @@ test('boars and archers join the later waves and mark their attacks', async ({ p
   expect(errors).toEqual([])
 })
 
-for (const outcome of ['victory', 'defeat'] as const) {
+for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden'] as const) {
   test(outcome + ' can be translated and restarted', async ({ page }) => {
     const errors: string[] = []
     page.on('pageerror', err => errors.push(err.message))
     await frozenClock(page)
-    // Fixed entry points keep both end-to-end scenarios repeatable.
-    await page.evaluate((win: boolean) => { Math.random = () => win ? 0.05 : 0.55 }, outcome === 'victory')
-    await page.getByRole('button', { name: 'Start run' }).click()
+    // Fixed entry points keep the end-to-end scenarios repeatable.
     const won = outcome === 'victory'
-    if (won) {
-      // Play the opening for real, then skip to the last seconds before dawn.
+    const duel = outcome !== 'defeat in the court'
+    await page.evaluate((win: boolean) => { Math.random = () => win ? 0.05 : 0.55 }, duel)
+    await page.getByRole('button', { name: 'Start run' }).click()
+    if (duel) {
+      // Play the opening for real, then skip to the last seconds before the dawn bell.
       await playRun(page, true, 12_000)
-      await page.evaluate(() => { (window as any).arena.battle.elapsed = 298 })
-      await playRun(page, true, 3000)
+      await page.evaluate((armor: number) => {
+        const { battle } = (window as any).arena
+        battle.elapsed = 298.5
+        battle.armor = armor
+      }, won ? 3 : 1)
+      await playRun(page, false, 2500)
+
+      // The bell carries the warden, the armor and the spells into the throne garden.
+      await expect(page.getByRole('heading', { name: 'Throne Garden' })).toBeVisible()
+      await expect(page.locator('#status')).toHaveText('THE DUEL')
+      await expect(page.locator('#clock-label')).toHaveText('THE DUCHESS')
+      await expect(page.locator('#clock')).toHaveText('100%')
+      await expect(page.getByRole('img', { name: `Armor ${won ? 3 : 1} of 5` })).toBeVisible()
+      await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire')
+      const garden = () => page.evaluate(() => {
+        const { battle } = (window as any).arena
+        return { stage: battle.stage, kinds: battle.foes.map((foe: { kind: string }) => foe.kind).sort(), shielded: battle.shielded }
+      })
+      expect(await garden()).toEqual({ stage: 'garden', kinds: ['duchess', 'seal'], shielded: true })
+      await select(page, 'ru')
+      await expect(page.getByRole('heading', { name: 'Тронный сад' })).toBeVisible()
+      await expect(page.locator('#clock-label')).toHaveText('КНЯГИНЯ')
+      await expect(page.locator('#status')).toHaveText('ДУЭЛЬ')
+      await select(page, 'en')
+
+      if (won) {
+        // The crown holds while the seal-flower lives, however hard the witchfire burns.
+        const seal = (health: number) => page.evaluate((value: number) => {
+          const { battle } = (window as any).arena
+          Object.assign(battle.spells.witchfire, { range: 2000, damage: 60 })
+          battle.foes.find((foe: { kind: string }) => foe.kind === 'seal').health = value
+        }, health)
+        await seal(1e9)
+        await page.clock.runFor(1500)
+        await expect(page.locator('#clock')).toHaveText('100%')
+        await seal(1)
+        // Once the flower falls the crown opens and the Duchess can be struck down.
+        for (let slice = 0; slice < 80 && await page.locator('#panel').isHidden(); slice++) {
+          await page.clock.runFor(250)
+          const now = await garden()
+          if (!now.shielded && now.kinds.length) await expect(page.locator('#clock')).not.toHaveText('100%')
+        }
+      } else {
+        // A warden who stands still in the marked sector is struck by the lash.
+        await playRun(page, false, 8000)
+      }
     } else {
       // A warden who never moves holds out until the boars arrive.
       expect(await playRun(page, false, 150_000)).toBeGreaterThan(0)
     }
-    await expect(page.locator('#title')).toHaveText(won ? 'The chapel stands' : 'The briars prevail')
+    await expect(page.locator('#title')).toHaveText(won ? 'The crown is lifted' : 'The briars prevail')
     const kills = Number(await page.locator('#kills').innerText())
     expect(kills).toBeGreaterThan(0)
     const report = await page.locator('#message').innerText()
@@ -258,20 +303,31 @@ for (const outcome of ['victory', 'defeat'] as const) {
     expect(report).toContain('Foes banished: ' + kills)
     const level = await page.locator('#level').innerText()
     expect(report).toContain('Level reached: ' + level)
-    if (won) expect(time).toBe('05:00')
-    else await expect(page.getByRole('img', { name: 'Armor 0 of 5' })).toBeVisible()
+    expect(report).toContain('Spells: Witchfire')
+    if (duel) expect(time).toMatch(/^05:[0-2]\d$/)
+    if (won) {
+      expect(report).not.toContain('The watch ended')
+      await expect(page.locator('#clock')).toHaveText('0%')
+    } else {
+      expect(report).toContain(duel ? 'The watch ended in the throne garden.' : 'The watch ended in the chapel court.')
+      await expect(page.getByRole('img', { name: 'Armor 0 of 5' })).toBeVisible()
+    }
 
     await select(page, 'ru')
-    await expect(page.locator('#title')).toHaveText(won ? 'Часовня устояла' : 'Терновник победил')
-    await expect(page.locator('#message')).toHaveText(`Время в бою — ${time}. Изгнано врагов — ${kills}. Достигнут уровень — ${level}.`)
+    await expect(page.locator('#title')).toHaveText(won ? 'Венец снят' : 'Терновник победил')
+    await expect(page.locator('#message')).toContainText(`Время в бою — ${time}. Изгнано врагов — ${kills}. Достигнут уровень — ${level}. Заклинания: Ведьмин огонь`)
+    if (!won) await expect(page.locator('#message')).toContainText(duel ? 'Дозор окончен в тронном саду.' : 'Дозор окончен у часовни.')
     await page.getByRole('button', { name: 'Ещё раз' }).click()
     await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
+    await expect(page.getByRole('heading', { name: 'У часовни' })).toBeVisible()
+    await expect(page.locator('#clock-label')).toHaveText('ДО РАССВЕТА')
     await expect(page.locator('#clock')).toHaveText('05:00')
     await expect(page.locator('#kills')).toHaveText('00')
     await expect(page.locator('#level')).toHaveText('1')
     await expect(page.locator('#slots [role=listitem]')).toHaveText(['Ведьмин огонь', '—', '—'])
     await expect(page.getByRole('progressbar', { name: 'Опыт 0 из 5' })).toBeVisible()
     await expect(page.getByRole('img', { name: 'Броня 5 из 5' })).toBeVisible()
+    expect(await page.evaluate(() => (window as any).arena.battle.stage)).toBe('court')
     expect(errors).toEqual([])
   })
 }

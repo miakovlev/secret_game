@@ -45,7 +45,7 @@ export const leveling = { first: 5, growth: 3 }
 // Seconds of waves before dawn.
 export const run = { duration: 300 }
 
-export const foeKinds = ['briarling', 'boar', 'archer'] as const
+export const foeKinds = ['briarling', 'boar', 'archer', 'seal', 'duchess'] as const
 export type FoeKind = (typeof foeKinds)[number]
 
 // Later foes are tougher and quicker: each value grows per second of the run.
@@ -68,6 +68,25 @@ export const foes: Record<FoeKind, FoeStats> = {
   boar: { health: 16, healthGrowth: 0.08, speed: 70, speedSpread: 10, speedGrowth: 0.05, reach: 26, ember: 4 },
   // Stops at a distance, takes aim, then looses a volley along the aimed line.
   archer: { health: 7, healthGrowth: 0.04, speed: 85, speedSpread: 10, speedGrowth: 0.05, reach: 18, ember: 3 },
+  // The seal-flower and the Duchess stand still in the throne garden and leave no embers.
+  seal: { health: 110, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
+  duchess: { health: 700, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+}
+
+// The throne garden fits one screen. The Duchess sits under the arch; a
+// seal-flower blooms on one flowerbed after another. While a flower lives her
+// crown of vines turns every blow aside and she lashes a marked sector of the
+// garden. When the flower falls the crown opens for `window` seconds.
+export const garden = {
+  width: 1000,
+  height: 490,
+  start: { x: 500, y: 410 },
+  duchess: { x: 500, y: 96 },
+  beds: [{ x: 190, y: 310 }, { x: 810, y: 310 }, { x: 330, y: 190 }, { x: 670, y: 190 }],
+  window: 6,
+  // The lash strikes every `every` seconds after `windup` seconds of warning,
+  // across a sector `arc` degrees to each side of the warden and `range` long.
+  lash: { every: 2.8, windup: 1, arc: 26, range: 620 },
 }
 
 // The boar starts pawing within `trigger` pixels, warns for `windup` seconds,

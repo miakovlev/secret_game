@@ -1,5 +1,5 @@
 import {
-  archerVolley, boarCharge, court, foes, leveling, loadout, oil, run, shownValue, spellIds, spells,
+  archerVolley, boarCharge, court, foes, garden, leveling, loadout, oil, run, shownValue, spellIds, spells,
   upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
 import type { FoeKind, SpellId, Stats, UpgradeId, Wave } from './content.ts'
@@ -34,7 +34,12 @@ export type BattleEvent =
   | { type: 'pickup'; at: Point }
   | { type: 'heal'; at: Point }
   | { type: 'arrow'; at: Point }
+  | { type: 'garden' }
+  | { type: 'crown'; open: boolean }
+  | { type: 'lash'; at: Point; facing: number; range: number; arc: number }
   | { type: 'level'; level: number }
+// The run starts in the chapel court and ends in the throne garden.
+export type Stage = 'court' | 'garden'
 export type Phase = 'ready' | 'playing' | 'paused' | 'choosing' | 'won' | 'lost'
 // One level-up card: a new spell, or the shown value of a stat before and after.
 export type Choice =
@@ -60,6 +65,7 @@ export function bursts(wave: Wave, elapsed: number) {
 
 export class Battle {
   phase: Phase = 'ready'
+  stage: Stage = 'court'
   player: Point = { x: court.width / 2, y: court.height / 2 }
   facing = 0
   foes: Foe[] = []
@@ -79,6 +85,11 @@ export class Battle {
   kills = 0
   elapsed = 0
   immunity = 0
+  // The duel. `crownOpen` is how long the Duchess stays open to blows; `lash`
+  // counts down to her next strike, or through its warning once `warned`.
+  crownOpen = 0
+  seals = 0
+  lash = { timer: garden.lash.every, warned: false, facing: 0 }
   // How many groups each wave of the schedule has already sent in.
   private fired = waves.map(() => 0)
 
@@ -91,7 +102,8 @@ export class Battle {
   // Top-left corner of the visible part of the court: centred on the warden
   // and stopped by the walls.
   camera(): Point {
-    const { width, height, view } = court
+    const { view } = court
+    const { width, height } = this.stage === 'court' ? court : garden
     return {
       x: Math.max(0, Math.min(width - view.width, this.player.x - view.width / 2)),
       y: Math.max(0, Math.min(height - view.height, this.player.y - view.height / 2)),
@@ -263,6 +275,66 @@ export class Battle {
     }
   }
 
+  get duchess() {
+    return this.foes.find(foe => foe.kind === 'duchess')
+  }
+
+  // The crown of vines guards the Duchess while a seal-flower lives.
+  get shielded() {
+    return this.foes.some(foe => foe.kind === 'seal')
+  }
+
+  private bloom() {
+    const bed = garden.beds[this.seals++ % garden.beds.length]
+    this.foes.push(makeFoe('seal', bed.x, bed.y, 0, foes.seal.health))
+  }
+
+  // The dawn bell: the waves end, and the warden carries armor and spells
+  // through the gate to face the Duchess.
+  private enterGarden(events: BattleEvent[]) {
+    this.stage = 'garden'
+    this.player = { ...garden.start }
+    this.facing = -Math.PI / 2
+    this.immunity = 1.5
+    this.embers = []
+    this.oils = []
+    this.arrows = []
+    this.foes = [makeFoe('duchess', garden.duchess.x, garden.duchess.y, 0, foes.duchess.health)]
+    this.bloom()
+    events.push({ type: 'garden' })
+  }
+
+  private duel(dt: number, events: BattleEvent[]) {
+    const lady = this.duchess!
+    const { lash } = garden
+    if (this.crownOpen > 0) {
+      // The lashes hang low while the next flower opens.
+      this.crownOpen = Math.max(0, this.crownOpen - dt)
+      if (this.crownOpen > 0) return
+      this.bloom()
+      this.lash = { timer: lash.every, warned: false, facing: 0 }
+      events.push({ type: 'crown', open: false })
+      return
+    }
+    this.lash.timer = Math.max(0, this.lash.timer - dt)
+    if (this.lash.timer > 0) return
+    const turn = Math.atan2(this.player.y - lady.y, this.player.x - lady.x)
+    if (!this.lash.warned) {
+      this.lash = { timer: lash.windup, warned: true, facing: turn }
+      return
+    }
+    const aside = turn - this.lash.facing
+    const arc = (lash.arc * Math.PI) / 180
+    const inside =
+      Math.abs(Math.atan2(Math.sin(aside), Math.cos(aside))) <= arc &&
+      Math.hypot(this.player.x - lady.x, this.player.y - lady.y) < lash.range
+    if (inside) this.wound()
+    events.push({
+      type: 'lash', at: { x: lady.x, y: lady.y }, facing: this.lash.facing, range: lash.range, arc,
+    })
+    this.lash = { timer: lash.every, warned: false, facing: 0 }
+  }
+
   // Each learned spell keeps its own cooldown and casts as soon as it is ready.
   private cast(dt: number, events: BattleEvent[]) {
     const at = { ...this.player }
@@ -271,12 +343,15 @@ export class Battle {
       const stats = this.spells[id]!
       this.timers[id] = Math.max(0, this.timers[id] - dt)
       if (this.timers[id] > 0) continue
+      // A shielded Duchess cannot be hurt or even aimed at.
+      const guarded = this.shielded
+      const open = this.foes.filter(foe => foe.kind !== 'duchess' || !guarded)
       let struck: Foe[]
       if (id === 'witchfire') {
         // Witchfire waits for a target instead of wasting the spark.
         let target: Foe | undefined
         let nearest = stats.range
-        for (const foe of this.foes) {
+        for (const foe of open) {
           if (reach(foe) < nearest) {
             target = foe
             nearest = reach(foe)
@@ -287,16 +362,18 @@ export class Battle {
         events.push({ type: 'shot', from: at, to: { x: target.x, y: target.y } })
       } else if (id === 'moonblade') {
         const arc = (stats.arc * Math.PI) / 180
-        struck = this.foes.filter(foe => {
+        struck = open.filter(foe => {
           const turn = Math.atan2(foe.y - at.y, foe.x - at.x) - this.facing
           const aside = Math.abs(Math.atan2(Math.sin(turn), Math.cos(turn)))
           return reach(foe) < stats.range && aside <= arc
         })
         events.push({ type: 'slash', at, facing: this.facing, range: stats.range, arc })
       } else {
-        struck = this.foes.filter(foe => reach(foe) < stats.range)
+        struck = open.filter(foe => reach(foe) < stats.range)
         events.push({ type: 'toll', at, radius: stats.range })
         for (const foe of struck) {
+          // Rooted things take the blow but stay where they are.
+          if (!foes[foe.kind].speed) continue
           const distance = reach(foe) || 1
           foe.x += ((foe.x - at.x) / distance) * stats.knockback
           foe.y += ((foe.y - at.y) / distance) * stats.knockback
@@ -309,9 +386,20 @@ export class Battle {
         const fallen = { x: foe.x, y: foe.y }
         this.foes.splice(this.foes.indexOf(foe), 1)
         this.kills++
+        events.push({ type: 'kill', at: fallen })
+        if (foe.kind === 'duchess') {
+          this.phase = 'won'
+          return
+        }
+        if (foe.kind === 'seal') {
+          // The crown opens and any lash already raised is dropped.
+          this.crownOpen = garden.window
+          this.lash = { timer: garden.lash.every, warned: false, facing: 0 }
+          events.push({ type: 'crown', open: true })
+          continue
+        }
         this.embers.push({ ...fallen, value: foes[foe.kind].ember })
         if (this.random() < oil.chance) this.oils.push(fallen)
-        events.push({ type: 'kill', at: fallen })
       }
     }
   }
@@ -320,21 +408,21 @@ export class Battle {
     const events: BattleEvent[] = []
     if (this.phase !== 'playing') return events
     this.elapsed += dt
-    if (this.elapsed >= DURATION) {
-      this.elapsed = DURATION
-      this.phase = 'won'
+    if (this.stage === 'court' && this.elapsed >= DURATION) {
+      this.enterGarden(events)
       return events
     }
+    const area = this.stage === 'court' ? court : garden
     const length = Math.hypot(dx, dy)
     if (length) {
       this.facing = Math.atan2(dy, dx)
       this.player.x = Math.max(
         22,
-        Math.min(court.width - 22, this.player.x + (160 * dt * dx) / length),
+        Math.min(area.width - 22, this.player.x + (160 * dt * dx) / length),
       )
       this.player.y = Math.max(
         22,
-        Math.min(court.height - 22, this.player.y + (160 * dt * dy) / length),
+        Math.min(area.height - 22, this.player.y + (160 * dt * dy) / length),
       )
     }
     this.collect(events)
@@ -347,7 +435,8 @@ export class Battle {
 
     // The schedule runs on the clock of the run, so a pause never shifts it
     // and every group enters exactly once.
-    waves.forEach((wave, index) => {
+    if (this.stage === 'garden') this.duel(dt, events)
+    else waves.forEach((wave, index) => {
       const due = bursts(wave, this.elapsed)
       if (this.fired[index] < due) {
         this.spawn(wave.kind, wave.count)

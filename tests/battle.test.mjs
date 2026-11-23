@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archerVolley, boarCharge, court, foes, loadout, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
+import { archerVolley, boarCharge, court, foes, garden, loadout, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
 const briarling = foes.briarling
@@ -22,6 +22,8 @@ test('new runs have full armor, an empty arena and independent state', () => {
   advance(old, 90, -1, 1)
   const fresh = new Battle()
   assert.equal(fresh.phase, 'ready')
+  assert.equal(fresh.stage, 'court')
+  assert.equal(fresh.crownOpen, 0)
   assert.equal(fresh.armor, MAX_ARMOR)
   assert.equal(fresh.elapsed, 0)
   assert.equal(fresh.kills, 0)
@@ -187,12 +189,42 @@ test('overlapping foes share a damage cooldown and can eventually destroy armor'
   assert.equal(b.phase, 'lost')
 })
 
-test('surviving the deadline ends the run at exactly one minute', () => {
+test('the dawn bell ends the waves and carries armor and spells into the throne garden', () => {
   const b = playing()
+  learn(b, 'toll')
+  b.spells.witchfire = upgraded(b.spells.witchfire, 'damage')
+  b.armor = 3
+  b.level = 4
+  b.kills = 17
+  b.foes = [makeFoe('boar', b.player.x + 300, b.player.y, 70, 50)]
+  b.embers = [{ x: 40, y: 40, value: 1 }]
+  b.oils = [{ x: 60, y: 60 }]
+  b.arrows = [{ x: 900, y: 500, vx: 100, vy: 0, life: 1 }]
+  const build = JSON.stringify([b.loadout, b.spells])
   b.elapsed = DURATION - .01
-  advance(b, 2)
-  assert.equal(b.elapsed, DURATION)
-  assert.equal(b.phase, 'won')
+  assert.equal(b.stage, 'court')
+  const events = []
+  for (let i = 0; i < 2; i++) events.push(...b.step(1 / 60, 0, 0))
+  assert.deepEqual(events.filter(event => event.type !== 'toll'), [{ type: 'garden' }])
+  assert.equal(b.stage, 'garden')
+  assert.equal(b.phase, 'playing')
+  assert.equal(b.armor, 3)
+  assert.equal(b.level, 4)
+  assert.equal(b.kills, 17)
+  assert.equal(JSON.stringify([b.loadout, b.spells]), build)
+  assert.deepEqual(b.player, garden.start)
+  assert.deepEqual([b.embers, b.oils, b.arrows], [[], [], []])
+  assert.deepEqual(b.foes.map(foe => foe.kind), ['duchess', 'seal'])
+  assert.deepEqual({ x: b.duchess.x, y: b.duchess.y }, garden.duchess)
+  assert.ok(b.shielded)
+
+  // No more waves: only the Duchess and her flower share the garden.
+  b.armor = Infinity
+  b.spells.witchfire.range = 0
+  b.loadout = ['witchfire']
+  advance(b, 600)
+  assert.deepEqual(b.foes.map(foe => foe.kind), ['duchess', 'seal'])
+  assert.ok(b.elapsed > DURATION + 9)
 })
 
 for (const phase of ['ready', 'paused', 'choosing', 'won', 'lost']) {
@@ -534,10 +566,10 @@ test('a whole run sends in exactly the groups the schedule lists', () => {
   b.armor = Infinity
   const seen = new Set()
   const entered = { briarling: 0, boar: 0, archer: 0 }
-  while (b.phase === 'playing') {
+  while (b.stage === 'court') {
     b.step(1 / 30, 0, 0)
     for (const foe of b.foes) {
-      if (seen.has(foe)) continue
+      if (seen.has(foe) || !(foe.kind in entered)) continue
       seen.add(foe)
       entered[foe.kind]++
     }
@@ -545,7 +577,7 @@ test('a whole run sends in exactly the groups the schedule lists', () => {
     if (b.foes.length > 40) b.foes = []
     b.arrows = []
   }
-  assert.equal(b.phase, 'won')
+  assert.equal(b.phase, 'playing')
   assert.equal(DURATION, run.duration)
   for (const kind of Object.keys(entered)) {
     const listed = waves
@@ -748,4 +780,170 @@ test('lamp oil mends one pip, never past the maximum, and waits while the armor 
   b.step(0, 0, 0)
   assert.equal(b.armor, 2)
   assert.equal(b.oils.length, 1)
+})
+
+// --- Step 2.6: the duel with the Duchess.
+
+// A warden who has just walked into the throne garden.
+function inGarden(random = () => 0.5) {
+  const b = playing(random)
+  b.elapsed = DURATION
+  b.step(1 / 60, 0, 0)
+  b.immunity = 0
+  const seal = b.foes.find(foe => foe.kind === 'seal')
+  return { b, seal, lady: b.duchess }
+}
+
+test('the warden moves inside the garden and the camera stays put', () => {
+  const { b } = inGarden()
+  b.armor = Infinity
+  b.spells.witchfire.range = 0
+  advance(b, 600, -1, 1)
+  assert.deepEqual(b.player, { x: 22, y: garden.height - 22 })
+  assert.deepEqual(b.camera(), { x: 0, y: 0 })
+  advance(b, 700, 1, 0)
+  assert.equal(b.player.x, garden.width - 22)
+  assert.deepEqual(b.camera(), { x: 0, y: 0 })
+})
+
+test('the crown of vines turns every spell aside while the seal-flower lives', () => {
+  const { b, seal, lady } = inGarden()
+  learn(b, 'moonblade')
+  learn(b, 'toll')
+  for (const id of b.loadout) Object.assign(b.spells[id], { range: 2000, arc: 180, cooldown: 0.1 })
+  // Stand next to the Duchess, far from the flower: she is the nearest target.
+  b.player = { x: lady.x, y: lady.y + 80 }
+  b.armor = Infinity
+  seal.health = 1e9
+  const at = { x: lady.x, y: lady.y }
+  const shots = []
+  for (let i = 0; i < 120; i++) shots.push(...b.step(1 / 60, 0, 0).filter(event => event.type === 'shot'))
+  assert.equal(lady.health, foes.duchess.health)
+  assert.ok(seal.health < 1e9)
+  assert.ok(shots.length > 5)
+  for (const shot of shots) assert.deepEqual(shot.to, { x: seal.x, y: seal.y })
+  // The bell hurts the flower but moves neither rooted thing.
+  assert.deepEqual({ x: lady.x, y: lady.y }, at)
+  assert.deepEqual({ x: seal.x, y: seal.y }, garden.beds[0])
+})
+
+test('breaking the seal opens the crown for a while, then the next flower blooms', () => {
+  const { b, seal, lady } = inGarden()
+  b.armor = Infinity
+  b.player = { x: seal.x + 60, y: seal.y }
+  seal.health = 0.5
+  const events = b.step(1 / 60, 0, 0)
+  assert.deepEqual(events.map(event => event.type), ['shot', 'kill', 'crown'])
+  assert.deepEqual(events[2], { type: 'crown', open: true })
+  assert.ok(!b.shielded)
+  assert.equal(b.crownOpen, garden.window)
+  assert.deepEqual([b.embers, b.oils], [[], []])
+
+  // Now the Duchess is the only target and she bleeds.
+  b.spells.witchfire.range = 2000
+  const frames = Math.round(garden.window * 60) - 2
+  let closed = []
+  for (let i = 0; i < frames; i++) closed.push(...b.step(1 / 60, 0, 0).filter(event => event.type === 'crown'))
+  assert.deepEqual(closed, [])
+  assert.deepEqual(b.foes, [lady])
+  const hurt = foes.duchess.health - lady.health
+  assert.ok(hurt > 10)
+
+  for (let i = 0; i < 4; i++) closed.push(...b.step(1 / 60, 0, 0).filter(event => event.type === 'crown'))
+  assert.deepEqual(closed, [{ type: 'crown', open: false }])
+  assert.ok(b.shielded)
+  assert.equal(b.crownOpen, 0)
+  const next = b.foes.filter(foe => foe.kind === 'seal')
+  assert.equal(next.length, 1)
+  assert.deepEqual({ x: next[0].x, y: next[0].y }, garden.beds[1])
+  assert.equal(next[0].health, foes.seal.health)
+  next[0].health = 1e9
+  const before = lady.health
+  advance(b, 120)
+  assert.equal(lady.health, before)
+})
+
+test('the lash warns, then strikes the marked sector; stepping out of it is safe', () => {
+  const strike = sidestep => {
+    const { b, lady } = inGarden()
+    b.spells.witchfire.range = 0
+    b.player = { x: lady.x, y: lady.y + 250 }
+    advance(b, Math.round(garden.lash.every * 60) - 2)
+    assert.equal(b.lash.warned, false)
+    advance(b, 4)
+    assert.equal(b.lash.warned, true)
+    assert.ok(Math.abs(b.lash.facing - Math.PI / 2) < 1e-9)
+    const facing = b.lash.facing
+    const lashes = []
+    const warning = Math.round(garden.lash.windup * 60)
+    for (let i = 0; i < warning - 6; i++) lashes.push(...b.step(1 / 60, sidestep, 0))
+    assert.deepEqual(lashes, [])
+    assert.equal(b.armor, MAX_ARMOR)
+    // The marked sector does not follow the warden.
+    assert.equal(b.lash.facing, facing)
+    for (let i = 0; i < 10; i++) lashes.push(...b.step(1 / 60, sidestep, 0).filter(event => event.type === 'lash'))
+    assert.deepEqual(lashes, [{
+      type: 'lash', at: { x: lady.x, y: lady.y }, facing,
+      range: garden.lash.range, arc: (garden.lash.arc * Math.PI) / 180,
+    }])
+    assert.equal(b.lash.warned, false)
+    return b.armor
+  }
+  assert.equal(strike(0), MAX_ARMOR - 1)
+  assert.equal(strike(1), MAX_ARMOR)
+})
+
+test('the lashes hang low while the crown is open', () => {
+  const { b, seal } = inGarden()
+  b.spells.witchfire.range = 0
+  advance(b, Math.round(garden.lash.every * 60) + 5)
+  assert.equal(b.lash.warned, true)
+  seal.health = 0.1
+  b.spells.witchfire.range = 2000
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.lash.warned, false)
+  b.spells.witchfire.range = 0
+  const lashes = []
+  for (let i = 0; i < Math.round(garden.window * 60) - 5; i++) lashes.push(...b.step(1 / 60, 0, 0))
+  assert.deepEqual(lashes, [])
+  assert.equal(b.armor, MAX_ARMOR)
+  // The count starts over once the crown closes.
+  advance(b, 10)
+  assert.ok(b.shielded)
+  assert.deepEqual(b.lash, { timer: b.lash.timer, warned: false, facing: 0 })
+  assert.ok(b.lash.timer > garden.lash.every - 0.2)
+})
+
+test('the run is won only when the open Duchess falls, and can be lost in the garden', () => {
+  const { b, seal, lady } = inGarden()
+  b.spells.witchfire.range = 2000
+  seal.health = 0.1
+  lady.health = 0.1
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.phase, 'playing')
+  assert.equal(lady.health, 0.1)
+  b.timers.witchfire = 0
+  const events = b.step(1 / 60, 0, 0)
+  assert.deepEqual(events.map(event => event.type), ['shot', 'kill'])
+  assert.equal(b.phase, 'won')
+  assert.equal(b.stage, 'garden')
+  assert.ok(b.elapsed > DURATION)
+  assert.deepEqual(b.embers, [])
+
+  const fallen = inGarden().b
+  fallen.spells.witchfire.range = 0
+  fallen.armor = 1
+  fallen.player = { x: fallen.duchess.x, y: fallen.duchess.y + 200 }
+  advance(fallen, Math.round((garden.lash.every + garden.lash.windup) * 60) + 6)
+  assert.equal(fallen.phase, 'lost')
+  assert.equal(fallen.stage, 'garden')
+  assert.equal(fallen.armor, 0)
+})
+
+test('touching the Duchess wounds like any other foe', () => {
+  const { b, lady } = inGarden()
+  b.spells.witchfire.range = 0
+  b.player = { x: lady.x, y: lady.y + foes.duchess.reach - 4 }
+  advance(b, 2)
+  assert.equal(b.armor, MAX_ARMOR - 1)
 })

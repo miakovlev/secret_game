@@ -1,9 +1,10 @@
 import Phaser from 'phaser'
 import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Phase, Shot } from './battle'
-import { archerVolley, boarCharge, court, loadout } from './content'
+import { archerVolley, boarCharge, court, foes, garden, loadout } from './content'
 import {
-  archerTexture, boarTexture, briarlingTexture, emberTexture, floorTexture, oilTexture, wardenTexture,
+  archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture, gardenTexture,
+  oilTexture, sealTexture, wardenTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -26,6 +27,8 @@ const cards = document.querySelector<HTMLElement>('#cards')!
 const cardsTitle = document.querySelector<HTMLElement>('#cards-title')!
 const choices = document.querySelector<HTMLElement>('#choices')!
 const slots = document.querySelector<HTMLElement>('#slots')!
+const sector = document.querySelector<HTMLElement>('#sector')!
+const clockLabel = document.querySelector<HTMLElement>('#clock-label')!
 const directions = new Set([
   'KeyW',
   'KeyA',
@@ -92,9 +95,14 @@ class Arena extends Phaser.Scene {
   private lastArmor = -1
   private lastGrowth = ''
   private lastSlots = ''
+  private lastPlace = ''
+  private floor!: Phaser.GameObjects.Image
 
   create() {
     this.textures.addCanvas('floor', floorTexture())
+    this.textures.addCanvas('garden', gardenTexture())
+    this.textures.addCanvas('duchess', duchessTexture())
+    this.textures.addCanvas('seal', sealTexture())
     this.textures.addCanvas('warden', wardenTexture())
     this.textures.addCanvas('briarling', briarlingTexture())
     this.textures.addCanvas('ember', emberTexture())
@@ -103,11 +111,10 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('oil', oilTexture())
     // The running scene, for browser tests and for poking at it from the console.
     Object.assign(window, { arena: this })
-    this.add.image(0, 0, 'floor').setOrigin(0)
+    this.floor = this.add.image(0, 0, 'floor').setOrigin(0)
     this.warden = this.add.image(0, 0, 'warden').setDepth(2)
     this.effects = this.add.graphics().setDepth(3)
     this.warnings = this.add.graphics().setDepth(0.7)
-    this.cameras.main.setBounds(0, 0, court.width, court.height)
     // Three still briarlings pose beside the warden on the title screen.
     const { x, y } = this.battle.player
     this.battle.foes = [[131, -106], [190, -56], [88, 104]].map(([dx, dy]) =>
@@ -121,6 +128,7 @@ class Arena extends Phaser.Scene {
       this.lastArmor = -1
       this.lastGrowth = ''
       this.lastSlots = ''
+      this.lastPlace = ''
       this.renderBattle()
       this.showPhase()
     }
@@ -195,7 +203,7 @@ class Arena extends Phaser.Scene {
       for (const effect of this.pictures) effect.life -= dt
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
-        const span = { pickup: 0.25, heal: 0.45, slash: 0.16, toll: 0.32 }[event.type as string]
+        const span = { pickup: 0.25, heal: 0.45, slash: 0.16, toll: 0.32, lash: 0.24 }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
       remaining -= dt
@@ -206,6 +214,18 @@ class Arena extends Phaser.Scene {
 
   private renderBattle() {
     const b = this.battle
+    // Moving between the court and the garden swaps the ground and the HUD.
+    const place = b.stage + language
+    if (this.lastPlace !== place) {
+      const copy = messages[language]
+      const area = b.stage === 'court' ? court : garden
+      this.floor.setTexture(b.stage === 'court' ? 'floor' : 'garden')
+      this.cameras.main.setBounds(0, 0, area.width, area.height)
+      sector.textContent = b.stage === 'court' ? copy.sector : copy.garden.sector
+      clockLabel.textContent = b.stage === 'court' ? copy.timer : copy.garden.timer
+      this.lastPlace = place
+      this.lastPhase = undefined
+    }
     const view = b.camera()
     this.cameras.main.setScroll(view.x, view.y)
     this.warden.setPosition(b.player.x, b.player.y).setRotation(b.facing)
@@ -222,15 +242,28 @@ class Arena extends Phaser.Scene {
       image.setVisible(!!foe)
       if (!foe) return
       if (image.texture.key !== foe.kind) image.setTexture(foe.kind)
+      const rooted = foe.kind === 'seal' || foe.kind === 'duchess'
       const locked = foe.mode !== 'chase' && foe.mode !== 'rest'
       const pawing = foe.mode === 'windup' ? Math.sin(b.elapsed * 70) * 2 : 0
       image
         .setPosition(foe.x + pawing, foe.y)
         .setRotation(
-          locked
-            ? Math.atan2(foe.dir.y, foe.dir.x)
-            : Math.atan2(b.player.y - foe.y, b.player.x - foe.x),
+          rooted
+            ? 0
+            : locked
+              ? Math.atan2(foe.dir.y, foe.dir.x)
+              : Math.atan2(b.player.y - foe.y, b.player.x - foe.x),
         )
+      if (rooted) {
+        // A health bar under each rooted thing; the seal is tied to the crown.
+        const span = foe.kind === 'duchess' ? 96 : 44
+        const left = foe.x - span / 2
+        const below = foe.y + (foe.kind === 'duchess' ? 62 : 30)
+        w.fillStyle(0x17131c, 0.8)
+        w.fillRect(left - 1, below - 1, span + 2, 7)
+        w.fillStyle(foe.kind === 'duchess' ? 0xe7bd78 : 0xd877e6, 1)
+        w.fillRect(left, below, (span * Math.max(0, foe.health)) / foes[foe.kind].health, 5)
+      }
       if (foe.mode === 'windup') {
         const progress = 1 - foe.timer / boarCharge.windup
         const { x, y } = foe.dir
@@ -255,6 +288,31 @@ class Arena extends Phaser.Scene {
         )
       }
     })
+    const lady = b.stage === 'garden' ? b.duchess : undefined
+    if (lady) {
+      const pulse = 0.5 + 0.5 * Math.sin(b.elapsed * 9)
+      if (b.shielded) {
+        for (const foe of b.foes) {
+          if (foe.kind !== 'seal') continue
+          w.lineStyle(2, 0xd877e6, 0.25 + 0.2 * pulse)
+          w.lineBetween(foe.x, foe.y, lady.x, lady.y)
+        }
+        // The closed crown: a ring of vines around the Duchess.
+        w.lineStyle(6, 0x4b6b4a, 0.95)
+        w.strokeCircle(lady.x, lady.y, 50)
+        w.lineStyle(2, 0x9fc38a, 0.9)
+        w.strokeCircle(lady.x, lady.y, 55)
+      } else {
+        w.lineStyle(3, 0xffe08a, 0.35 + 0.5 * pulse)
+        w.strokeCircle(lady.x, lady.y, 50 + 6 * pulse)
+      }
+      if (b.lash.warned) {
+        const progress = 1 - b.lash.timer / garden.lash.windup
+        const arc = (garden.lash.arc * Math.PI) / 180
+        w.fillStyle(0xb02a55, 0.12 + 0.3 * progress)
+        w.slice(lady.x, lady.y, garden.lash.range, b.lash.facing - arc, b.lash.facing + arc).fillPath()
+      }
+    }
     while (this.oils.length < b.oils.length) {
       this.oils.push(this.add.image(0, 0, 'oil').setDepth(0.5))
     }
@@ -293,6 +351,10 @@ class Arena extends Phaser.Scene {
         g.slice(at.x, at.y, range, facing - arc, facing + arc).fillPath()
         g.lineStyle(2.5, 0xf2f5ff, fade)
         g.beginPath().arc(at.x, at.y, range, facing - arc, facing + arc).strokePath()
+      } else if (event.type === 'lash') {
+        const { at, facing, range, arc } = event
+        g.fillStyle(0xff9fbd, 0.55 * fade)
+        g.slice(at.x, at.y, range, facing - arc, facing + arc).fillPath()
       } else if (event.type === 'toll') {
         const radius = event.radius * (0.35 + 0.65 * (1 - fade))
         g.fillStyle(0xe7bd78, 0.12 * fade)
@@ -317,7 +379,11 @@ class Arena extends Phaser.Scene {
       g.lineStyle(1.5, 0xffdb93, fade)
       g.strokeCircle(to.x, to.y, 4 + progress * 8)
     }
-    const timer = timeText(Math.ceil(DURATION - b.elapsed))
+    const timer = lady
+      ? Math.ceil((100 * Math.max(0, lady.health)) / foes.duchess.health) + '%'
+      : b.stage === 'garden'
+        ? '0%'
+        : timeText(Math.ceil(DURATION - b.elapsed))
     const count = String(b.kills).padStart(2, '0')
     if (clock.textContent !== timer) clock.textContent = timer
     if (kills.textContent !== count) kills.textContent = count
@@ -404,7 +470,8 @@ class Arena extends Phaser.Scene {
   private showPhase() {
     const b = this.battle
     const copy = messages[language]
-    status.textContent = copy.status[b.phase]
+    status.textContent =
+      b.phase === 'playing' && b.stage === 'garden' ? copy.garden.status : copy.status[b.phase]
     panel.hidden = b.phase === 'playing' || b.phase === 'choosing'
     cards.hidden = b.phase !== 'choosing'
     pause.disabled = b.phase !== 'playing'
@@ -417,7 +484,11 @@ class Arena extends Phaser.Scene {
       message.textContent = copy[b.phase].message
       action.textContent = copy[b.phase].action
     } else {
-      message.textContent = copy.result(timeText(Math.floor(b.elapsed)), b.kills, b.level)
+      message.textContent = [
+        copy.result(timeText(Math.floor(b.elapsed)), b.kills, b.level),
+        copy.build(b.loadout.map(id => copy.spells[id].name).join(', ')),
+        ...(b.phase === 'lost' ? [copy.fell[b.stage]] : []),
+      ].join(' ')
       action.textContent = copy.retry
     }
   }

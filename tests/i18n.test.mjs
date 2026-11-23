@@ -17,6 +17,8 @@ test('both catalogs have the same complete set of nonempty messages', () => {
   compare(messages.en, messages.ru)
   assert.equal(messages.en.armorValue(2, 5), 'Armor 2 of 5')
   assert.equal(messages.ru.armorValue(2, 5), 'Броня 2 из 5')
+  assert.equal(messages.en.build('Witchfire, Funeral Toll'), 'Spells: Witchfire, Funeral Toll.')
+  assert.equal(messages.ru.build('Ведьмин огонь'), 'Заклинания: Ведьмин огонь.')
   assert.equal(messages.en.levelTitle(2), 'Level 2')
   assert.equal(messages.ru.levelTitle(2), 'Уровень 2')
   assert.equal(messages.en.xpValue(2, 5), 'Experience 2 of 5')
