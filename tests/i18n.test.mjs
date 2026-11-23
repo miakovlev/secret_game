@@ -27,8 +27,8 @@ test('both catalogs have the same complete set of nonempty messages', () => {
   assert.equal(messages.ru.relicLine('Песочные часы 2'), 'Реликвии: Песочные часы 2.')
   assert.equal(messages.en.blessLine('Witchfire'), 'Blessed: Witchfire.')
   assert.equal(messages.ru.blessLine('Ведьмин огонь'), 'Благословлено: Ведьмин огонь.')
-  assert.equal(messages.en.phaseLine(2), 'Duel phase reached: 2 of 2.')
-  assert.equal(messages.ru.phaseLine(1), 'Достигнута фаза дуэли: 1 из 2.')
+  assert.equal(messages.en.phaseLine(2), 'Duel phase reached: 2 of 3.')
+  assert.equal(messages.ru.phaseLine(1), 'Достигнута фаза дуэли: 1 из 3.')
   for (const [lang, name, relic] of [['en', 'Two Gates', 'Hourglass'], ['ru', 'Двое ворот', 'Песочные часы']]) {
     const copy = messages[lang]
     for (const line of [

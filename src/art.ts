@@ -1,4 +1,4 @@
-import { court, garden } from './content'
+import { court } from './content'
 import type { HeroId } from './content'
 
 type Pen = CanvasRenderingContext2D
@@ -356,76 +356,6 @@ export function oilTexture() {
     polygon(p, [[12,9],[18,9],[18,13],[22,18],[20,24],[10,24],[8,18],[12,13]], '#3f8f86')
     polygon(p, [[13,15],[17,15],[19,19],[18,22],[12,22],[11,19]], '#a9efd9')
     box(p, 12, 6, 6, 3, '#c9a977')
-  })
-}
-
-// The throne garden: dark beds of earth under a living arch of thorns.
-export function gardenTexture() {
-  const { width, height } = garden
-  return texture(width, height, (p) => {
-    let seed = 1907
-    const random = () => {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
-      return seed / 4294967296
-    }
-    box(p, 0, 0, width, height, '#211d24')
-    const stones = ['#352f3a', '#38323d', '#322c37', '#3b3540']
-    for (let row = 0; row * 44 < height; row++) {
-      for (let x = -90 + (row % 2) * 45; x < width; x += 90) {
-        const y = row * 44
-        polygon(p, [[x+4,y+2],[x+84,y+1],[x+88,y+6],[x+87,y+39],
-          [x+80,y+42],[x+4,y+41],[x+1,y+34]], stones[Math.floor(random()*stones.length)])
-      }
-    }
-    // A pale carpet of fallen petals runs from the gate to the throne.
-    const fade = p.createLinearGradient(0, 0, 0, height)
-    fade.addColorStop(0, '#8d5f7a40')
-    fade.addColorStop(1, '#8d5f7a08')
-    p.fillStyle = fade
-    p.fillRect(width / 2 - 60, 0, 120, height)
-    for (const bed of garden.beds) {
-      circle(p, bed.x, bed.y, 46, '#4a4048')
-      circle(p, bed.x, bed.y, 40, '#2a221f')
-      for (let i = 0; i < 9; i++) {
-        const turn = random() * Math.PI * 2, far = 12 + random() * 24
-        const lx = bed.x + Math.cos(turn) * far, ly = bed.y + Math.sin(turn) * far
-        polygon(p, [[lx,ly],[lx+8,ly-4],[lx+15,ly],[lx+8,ly+4]], '#3f4a3d')
-      }
-    }
-    // The arch of living thorn behind the Duchess.
-    const { x, y } = garden.duchess
-    p.lineCap = 'round'
-    for (const [line, color, lift] of [[26, '#2b2130', 0], [14, '#4a3547', 4], [5, '#6b4a5f', 8]] as const) {
-      p.strokeStyle = color
-      p.lineWidth = line
-      p.beginPath()
-      p.moveTo(x - 150, y + 70)
-      p.bezierCurveTo(x - 150, y - 120 + lift, x + 150, y - 120 + lift, x + 150, y + 70)
-      p.stroke()
-    }
-    for (let i = 0; i < 22; i++) {
-      const t = i / 21, turn = Math.PI * (1 + t)
-      const tx = x + Math.cos(turn) * 150, ty = y + 70 + Math.sin(turn) * 135
-      polygon(p, [[tx-5,ty],[tx,ty-13],[tx+5,ty]], '#7d5870')
-    }
-    p.lineWidth = 1
-    const glow = p.createRadialGradient(x, y, 10, x, y, 170)
-    glow.addColorStop(0, '#c86ad033')
-    glow.addColorStop(1, '#c86ad000')
-    p.fillStyle = glow
-    p.fillRect(x - 170, y - 96, 340, 280)
-    for (let i = 0; i < 6000; i++) {
-      box(p, random()*width, random()*height, 2, 1,
-        random() < .5 ? '#0f0c151c' : '#e2c5d612')
-    }
-    hedge(p, width, random)
-    for (const turn of [[1,0,0,-1,0,height], [0,1,1,0,0,0], [0,1,-1,0,width,0]]) {
-      p.save()
-      p.transform(turn[0], turn[1], turn[2], turn[3], turn[4], turn[5])
-      hedge(p, turn[0] ? width : height, random)
-      p.restore()
-    }
-    for (const cx of [70, width - 70]) for (const cy of [80, height - 80]) candles(p, cx, cy)
   })
 }
 

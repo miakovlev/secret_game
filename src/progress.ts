@@ -31,7 +31,8 @@ export type Outcome = {
   // Seconds from the start of the run to its end.
   time: number
   kills: number
-  reachedGarden: boolean
+  // The run lasted until the Duchess came.
+  reachedDuel: boolean
   felledGardener: boolean
 }
 
@@ -135,7 +136,7 @@ export function settle(before: Progress, run: Outcome): { progress: Progress; re
   }
   for (const id of heroIds) {
     const earned =
-      (heroes[id].opens === 'garden' && run.reachedGarden) ||
+      (heroes[id].opens === 'duel' && run.reachedDuel) ||
       (heroes[id].opens === 'gardener' && run.felledGardener)
     if (earned && !progress.heroes.includes(id)) {
       progress.heroes.push(id)

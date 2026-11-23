@@ -7,7 +7,7 @@ import { tipIds, Tutor } from '../src/tutor.ts'
 
 const run = (over = {}) => ({
   hero: 'warden', difficulty: 1, won: false, time: 300, kills: 80,
-  reachedGarden: false, felledGardener: false, ...over,
+  reachedDuel: false, felledGardener: false, ...over,
 })
 
 function withStorage(storage, check) {
@@ -66,29 +66,29 @@ test('the first win opens the second difficulty and a win there opens the third'
 })
 
 test('a lost run opens no difficulty but still counts toward heroes and the banished record', () => {
-  const lost = settle(fresh(), run({ kills: 140, reachedGarden: true }))
+  const lost = settle(fresh(), run({ kills: 140, reachedDuel: true }))
   assert.equal(lost.progress.difficulty, 1)
   assert.deepEqual(lost.rewards, [{ kind: 'hero', hero: 'duelist' }])
   assert.deepEqual(lost.progress.heroes, ['warden', 'duelist'])
   assert.deepEqual(lost.progress.records[0], { wins: 0, best: null, kills: 140 })
   // Fewer banished later does not lower the record, and the hero is not opened twice.
-  const later = settle(lost.progress, run({ kills: 20, reachedGarden: true }))
+  const later = settle(lost.progress, run({ kills: 20, reachedDuel: true }))
   assert.equal(later.progress.records[0].kills, 140)
   assert.deepEqual(later.rewards, [])
 
   const bell = settle(later.progress, run({ felledGardener: true }))
   assert.deepEqual(bell.rewards, [{ kind: 'hero', hero: 'ringer' }])
   assert.deepEqual(bell.progress.heroes, ['warden', 'duelist', 'ringer'])
-  assert.deepEqual([heroes.duelist.opens, heroes.ringer.opens], ['garden', 'gardener'])
+  assert.deepEqual([heroes.duelist.opens, heroes.ringer.opens], ['duel', 'gardener'])
 })
 
 test('a win opens the starting relic of the hero who won, and a faster win sets a record', () => {
-  const first = settle(fresh(), run({ won: true, time: 650, reachedGarden: true }))
+  const first = settle(fresh(), run({ won: true, time: 650, reachedDuel: true }))
   assert.deepEqual(first.rewards, [
     { kind: 'record' }, { kind: 'difficulty', level: 2 }, { kind: 'variant', hero: 'warden' }, { kind: 'hero', hero: 'duelist' },
   ])
   assert.deepEqual(first.progress.variants, ['warden'])
-  const slower = settle(first.progress, run({ won: true, time: 700, hero: 'duelist', reachedGarden: true }))
+  const slower = settle(first.progress, run({ won: true, time: 700, hero: 'duelist', reachedDuel: true }))
   assert.deepEqual(slower.rewards, [{ kind: 'variant', hero: 'duelist' }])
   assert.equal(slower.progress.records[0].best, 650)
   const faster = settle(slower.progress, run({ won: true, time: 600 }))
@@ -103,7 +103,7 @@ test('progress survives a reload through storage', () => {
   const storage = memory()
   withStorage(storage, () => {
     assert.deepEqual(load(), fresh())
-    const { progress } = settle(fresh(), run({ won: true, time: 630, reachedGarden: true, felledGardener: true }))
+    const { progress } = settle(fresh(), run({ won: true, time: 630, reachedDuel: true, felledGardener: true }))
     store(progress)
     assert.equal(JSON.parse(storage.values.get(saveKey)).version, saveVersion)
     assert.deepEqual(load(), progress)

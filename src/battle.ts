@@ -1,5 +1,5 @@
 import {
-  archerVolley, blessings, boarCharge, court, difficulties, fireflyRule, foes, garden, gardenerRule, heroes, leveling, loadout, mothHeal, oil, relicIds,
+  archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, gardenerRule, heroes, leveling, loadout, mothHeal, oil, relicIds,
   relicRule,
   relics, run, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
@@ -52,14 +52,15 @@ export type BattleEvent =
   | { type: 'sow'; at: Point }
   | { type: 'burst'; at: Point; radius: number }
   | { type: 'sting'; at: Point }
-  | { type: 'garden' }
+  | { type: 'duel' }
+  | { type: 'volley'; at: Point }
+  | { type: 'erupt'; at: Point; radius: number }
   | { type: 'crown'; open: boolean }
   | { type: 'phase'; phase: number }
-  | { type: 'buds'; at: Point[] }
   | { type: 'lash'; at: Point; facing: number; range: number; arc: number }
   | { type: 'level'; level: number }
-// The run starts in the chapel court and ends in the throne garden.
-export type Stage = 'court' | 'garden'
+// The run has two stages in the same court: the waves, then the duel.
+export type Stage = 'court' | 'duel'
 export type Phase = 'ready' | 'playing' | 'paused' | 'choosing' | 'won' | 'lost'
 // One card: a new spell, the shown value of a spell stat before and after,
 // or a relic at the level it would reach.
@@ -133,10 +134,17 @@ export class Battle {
   // counts down to her next strike, or through its warning once `warned`.
   crownOpen = 0
   seals = 0
-  // The duel has two phases; `lashes` counts her strikes in the second one.
+  // The duel has a phase for each threshold of her health passed, from 1.
   duelPhase = 1
-  lashes = 0
-  lash = { timer: garden.lash.every, warned: false, facing: 0 }
+  // Each of her attacks counts down to its warning, then through it.
+  lash = { timer: duelRule.lash.every, warned: false, facing: 0 }
+  volley = { timer: duelRule.volley.every, warned: false, facing: 0 }
+  // Seconds until the next briar patch and the next summons; packs called so far.
+  patchIn = duelRule.patch.every
+  summonIn = duelRule.summon.every
+  summons = 0
+  // Briar patches: `warn` counts down to the eruption, then `life` to the end.
+  patches: (Point & { warn: number; life: number })[] = []
   // How many groups each wave of the schedule has already sent in.
   private fired = waves.map(() => 0)
 
@@ -172,8 +180,7 @@ export class Battle {
   // Top-left corner of the visible part of the court: centred on the warden
   // and stopped by the walls.
   camera(): Point {
-    const { view } = court
-    const { width, height } = this.stage === 'court' ? court : garden
+    const { width, height, view } = court
     return {
       x: Math.max(0, Math.min(width - view.width, this.player.x - view.width / 2)),
       y: Math.max(0, Math.min(height - view.height, this.player.y - view.height / 2)),
@@ -474,91 +481,122 @@ export class Battle {
   }
 
   private bloom() {
-    const bed = garden.beds[this.seals++ % garden.beds.length]
+    const bed = duelRule.beds[this.seals++ % duelRule.beds.length]
     this.foes.push(makeFoe('seal', bed.x, bed.y, 0, this.vigor('seal')))
   }
 
-  // The dawn bell: the waves end, and the warden carries armor and spells
-  // through the gate to face the Duchess.
-  private enterGarden(events: BattleEvent[]) {
-    this.stage = 'garden'
-    this.player = { ...garden.start }
-    this.facing = -Math.PI / 2
-    this.immunity = 1.5
-    this.embers = []
-    this.oils = []
-    this.reliquaries = []
-    this.arrows = []
-    this.seeds = []
-    this.trails = []
-    this.echoes = []
-    // A trial not finished by dawn is over.
+  // How much faster she attacks in the current phase.
+  private get tempo() {
+    return duelRule.tempo ** (this.duelPhase - 1)
+  }
+
+  private rest() {
+    const { lash, volley, patch, summon } = duelRule
+    this.lash = { timer: lash.every * this.tempo, warned: false, facing: 0 }
+    this.volley = { timer: volley.every * this.tempo, warned: false, facing: 0 }
+    this.patchIn = patch.every * this.tempo
+    this.summonIn = Math.min(this.summonIn, summon.every * this.tempo)
+  }
+
+  // The dawn bell: the waves stop, and the Duchess walks into the court
+  // through the north gate. Everything else stays as it is.
+  private beginDuel(events: BattleEvent[]) {
+    this.stage = 'duel'
+    // A trial not finished by dawn is over, and the Gardener sinks back.
     if (this.trial !== 'won') this.trial = 'closed'
     this.ringing = 0
-    this.foes = [makeFoe('duchess', garden.duchess.x, garden.duchess.y, 0, this.vigor('duchess'))]
+    this.foes = this.foes.filter(foe => foe.kind !== 'gardener')
+    this.foes.push(makeFoe('duchess', court.gate.x, court.gate.y + 70, duelRule.speed, this.vigor('duchess')))
     this.bloom()
-    events.push({ type: 'garden' })
+    this.rest()
+    events.push({ type: 'duel' })
   }
 
   private duel(dt: number, events: BattleEvent[]) {
     const lady = this.duchess!
-    const { lash } = garden
+    const { lash, volley, patch, summon } = duelRule
+    const near = (spot: Point, reach: number) =>
+      Math.hypot(this.player.x - spot.x, this.player.y - spot.y) < reach
+    // Briar patches erupt and linger whatever else she is doing.
+    this.patches = this.patches.filter(spot => {
+      if (spot.warn > 0) {
+        spot.warn -= dt
+        if (spot.warn > 0) return true
+        events.push({ type: 'erupt', at: { x: spot.x, y: spot.y }, radius: patch.radius })
+      } else {
+        spot.life -= dt
+      }
+      if (near(spot, patch.radius)) this.wound()
+      return spot.life > 0
+    })
     if (this.crownOpen > 0) {
-      // The lashes hang low while the next flower opens.
+      // She stands still with her lashes low while the next flower opens.
+      lady.speed = 0
       this.crownOpen = Math.max(0, this.crownOpen - dt)
       if (this.crownOpen > 0) return
       this.bloom()
-      this.lash = { timer: lash.every, warned: false, facing: 0 }
+      this.rest()
       events.push({ type: 'crown', open: false })
       return
     }
-    this.lash.timer = Math.max(0, this.lash.timer - dt)
-    if (this.lash.timer > 0) return
+    lady.speed = duelRule.speed
     const turn = Math.atan2(this.player.y - lady.y, this.player.x - lady.x)
-    if (!this.lash.warned) {
-      this.lash = { timer: lash.windup, warned: true, facing: turn }
-      return
-    }
-    const aside = turn - this.lash.facing
-    const arc = (lash.arc * Math.PI) / 180
-    const inside =
-      Math.abs(Math.atan2(Math.sin(aside), Math.cos(aside))) <= arc &&
-      Math.hypot(this.player.x - lady.x, this.player.y - lady.y) < lash.range
-    if (inside) this.wound()
-    events.push({
-      type: 'lash', at: { x: lady.x, y: lady.y }, facing: this.lash.facing, range: lash.range, arc,
-    })
-    this.lash = { timer: lash.every, warned: false, facing: 0 }
-    if (this.duelPhase < 2) return
-    this.lashes++
-    if (this.lashes % garden.phase2.every) return
-    // The buds beside the seal-flower burst open and let briarlings out.
-    const beds = this.buds()
-    const stats = foes.briarling
-    for (const bed of beds) {
-      for (let i = 0; i < garden.phase2.perBud; i++) {
-        this.foes.push(makeFoe(
-          'briarling',
-          bed.x + (i - (garden.phase2.perBud - 1) / 2) * 28,
-          bed.y,
-          stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
-          this.vigor('briarling'),
-        ))
+
+    this.lash.timer = Math.max(0, this.lash.timer - dt)
+    if (this.lash.timer === 0) {
+      if (!this.lash.warned) {
+        this.lash = { timer: lash.windup, warned: true, facing: turn }
+      } else {
+        const aside = turn - this.lash.facing
+        const arc = (lash.arc * Math.PI) / 180
+        if (Math.abs(Math.atan2(Math.sin(aside), Math.cos(aside))) <= arc && near(lady, lash.range)) this.wound()
+        events.push({
+          type: 'lash', at: { x: lady.x, y: lady.y }, facing: this.lash.facing, range: lash.range, arc,
+        })
+        this.lash = { timer: lash.every * this.tempo, warned: false, facing: 0 }
       }
     }
-    events.push({ type: 'buds', at: beds })
-  }
 
-  // The flowerbeds that let briarlings out in the second phase: the ones
-  // after the bed that holds, or last held, the seal-flower.
-  buds(): Point[] {
-    const { beds, phase2 } = garden
-    return Array.from({ length: phase2.buds }, (_, i) => beds[(this.seals + i) % beds.length])
-  }
+    this.volley.timer = Math.max(0, this.volley.timer - dt)
+    if (this.volley.timer === 0) {
+      if (!this.volley.warned) {
+        this.volley = { timer: volley.windup, warned: true, facing: turn }
+      } else {
+        // A fan of thorns along the lines she marked.
+        for (let i = 0; i < volley.thorns; i++) {
+          const aim = this.volley.facing +
+            (((i / (volley.thorns - 1)) * 2 - 1) * volley.spread * Math.PI) / 180
+          this.arrows.push({
+            x: lady.x,
+            y: lady.y,
+            vx: Math.cos(aim) * volley.speed,
+            vy: Math.sin(aim) * volley.speed,
+            life: volley.reach / volley.speed,
+          })
+        }
+        events.push({ type: 'volley', at: { x: lady.x, y: lady.y } })
+        this.volley = { timer: volley.every * this.tempo, warned: false, facing: 0 }
+      }
+    }
 
-  // Whether the next lash will open the buds, so the scene can warn of it.
-  get budding() {
-    return this.duelPhase === 2 && (this.lashes + 1) % garden.phase2.every === 0
+    this.patchIn -= dt
+    if (this.patchIn <= 0) {
+      this.patches.push({ x: this.player.x, y: this.player.y, warn: patch.windup, life: patch.life })
+      this.patchIn = patch.every * this.tempo
+    }
+
+    this.summonIn -= dt
+    if (this.summonIn <= 0) {
+      this.summons++
+      this.spawn('briarling', summon.pack)
+      // From the second phase she also calls a boar or a pair of archers, in turn.
+      if (this.duelPhase > 1) {
+        if (this.summons % 2) this.spawn('boar', 1)
+        else this.spawn('archer', 2)
+      }
+      this.summonIn = summon.every * this.tempo
+      events.push({ type: 'summon', at: { x: lady.x, y: lady.y } })
+    }
   }
 
   // Foes a spell may hit: a shielded Duchess and a stooped Gardener cannot be
@@ -621,10 +659,14 @@ export class Battle {
 
   private strike(foe: Foe, damage: number, events: BattleEvent[]) {
     foe.health -= damage
-    if (foe.kind === 'duchess' && this.duelPhase === 1 && foe.health > 0 && foe.health <= foe.full * garden.phase2.at) {
-      // Half her health is gone: the second phase begins, once.
-      this.duelPhase = 2
-      events.push({ type: 'phase', phase: 2 })
+    // Each threshold of her health passed begins a new phase, once.
+    while (
+      foe.kind === 'duchess' && foe.health > 0 &&
+      this.duelPhase <= duelRule.phases.length &&
+      foe.health <= foe.full * duelRule.phases[this.duelPhase - 1]
+    ) {
+      this.duelPhase++
+      events.push({ type: 'phase', phase: this.duelPhase })
     }
     if (foe.health > 0) return
     const fallen = { x: foe.x, y: foe.y }
@@ -635,8 +677,8 @@ export class Battle {
       this.phase = 'won'
     } else if (foe.kind === 'seal') {
       // The crown opens and any lash already raised is dropped.
-      this.crownOpen = garden.window
-      this.lash = { timer: garden.lash.every, warned: false, facing: 0 }
+      this.crownOpen = duelRule.window
+      this.rest()
       events.push({ type: 'crown', open: true })
     } else {
       this.embers.push({ ...fallen, value: foes[foe.kind].ember })
@@ -811,11 +853,8 @@ export class Battle {
     const events: BattleEvent[] = []
     if (this.phase !== 'playing') return events
     this.elapsed += dt
-    if (this.stage === 'court' && this.elapsed >= DURATION) {
-      this.enterGarden(events)
-      return events
-    }
-    const area = this.stage === 'court' ? court : garden
+    if (this.stage === 'court' && this.elapsed >= DURATION) this.beginDuel(events)
+    const area = court
     const length = Math.hypot(dx, dy)
     const pace = heroes[this.hero].speed * (1 + this.rank('boots') * relics.boots.amount)
     if (length) {
@@ -839,7 +878,7 @@ export class Battle {
     // The schedule runs on the clock of the run, so a pause never shifts it
     // and every group enters exactly once.
     if (this.stage === 'court') this.bell(dt, events)
-    if (this.stage === 'garden') this.duel(dt, events)
+    if (this.stage === 'duel') this.duel(dt, events)
     else this.schedule.forEach((wave, index) => {
       const due = bursts(wave, this.elapsed)
       if (this.fired[index] < due) {

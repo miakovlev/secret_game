@@ -61,16 +61,16 @@ export type Hero = {
   chainRange: number
   // Multiplies how far the funeral toll pushes foes.
   knockback: number
-  // What opens the hero: available from the start, after first reaching the
-  // throne garden, or after first felling the Gardener.
-  opens: 'start' | 'garden' | 'gardener'
+  // What opens the hero: available from the start, after first holding out
+  // until the Duchess comes, or after first felling the Gardener.
+  opens: 'start' | 'duel' | 'gardener'
   // The relic the hero may start with once a run has been won with them.
   variant: RelicId
 }
 
 export const heroes: Record<HeroId, Hero> = {
   warden: { spell: 'witchfire', speed: 160, chain: 3, chainRange: 120, knockback: 1, opens: 'start', variant: 'beads' },
-  duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1, opens: 'garden', variant: 'boots' },
+  duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1, opens: 'duel', variant: 'boots' },
   ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6, opens: 'gardener', variant: 'cloak' },
 }
 
@@ -87,8 +87,8 @@ export const leveling = { first: 5, growth: 3 }
 // every wave that many seconds forward, so later waves overlap earlier ones.
 export const difficulties = [
   { toughness: 1, flankEvery: 0, early: 0 },
-  { toughness: 1.15, flankEvery: 3, early: 0 },
-  { toughness: 1.3, flankEvery: 3, early: 45 },
+  { toughness: 1.35, flankEvery: 3, early: 0 },
+  { toughness: 1.45, flankEvery: 3, early: 20 },
 ]
 
 // Seconds of waves before dawn.
@@ -114,22 +114,22 @@ type FoeStats = {
 
 export const foes: Record<FoeKind, FoeStats> = {
   // Crawls straight at the warden.
-  briarling: { health: 3, healthGrowth: 0.03, speed: 95, speedSpread: 15, speedGrowth: 0.05, reach: 18, ember: 1 },
+  briarling: { health: 3, healthGrowth: 0.038, speed: 95, speedSpread: 15, speedGrowth: 0.05, reach: 18, ember: 1 },
   // A marked briarling: slower, much tougher, and it carries a reliquary.
   marked: { health: 26, healthGrowth: 0.12, speed: 78, speedSpread: 8, speedGrowth: 0.04, reach: 22, ember: 3 },
   // Walks up, paws the ground, then charges down a marked lane.
-  boar: { health: 16, healthGrowth: 0.08, speed: 70, speedSpread: 10, speedGrowth: 0.05, reach: 26, ember: 4 },
+  boar: { health: 19, healthGrowth: 0.08, speed: 70, speedSpread: 10, speedGrowth: 0.05, reach: 26, ember: 4 },
   // Stops at a distance, takes aim, then looses a volley along the aimed line.
-  archer: { health: 7, healthGrowth: 0.04, speed: 85, speedSpread: 10, speedGrowth: 0.05, reach: 18, ember: 3 },
+  archer: { health: 9, healthGrowth: 0.04, speed: 85, speedSpread: 10, speedGrowth: 0.05, reach: 18, ember: 3 },
   // A stone knight: slow and very hard to wear down.
-  knight: { health: 70, healthGrowth: 0.1, speed: 58, speedSpread: 6, speedGrowth: 0.02, reach: 26, ember: 6 },
+  knight: { health: 80, healthGrowth: 0.1, speed: 58, speedSpread: 6, speedGrowth: 0.02, reach: 26, ember: 6 },
   // A healer moth: frail, hangs back and mends the most wounded foe near it.
   moth: { health: 12, healthGrowth: 0.02, speed: 105, speedSpread: 10, speedGrowth: 0, reach: 16, ember: 4 },
   // The Gardener rises only if the hero rings the bell on his grave.
   gardener: { health: 190, healthGrowth: 0.12, speed: 26, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 10 },
-  // The seal-flower and the Duchess stand still in the throne garden and leave no embers.
-  seal: { health: 150, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
-  duchess: { health: 900, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+  // The seal-flower is rooted; the Duchess walks at her own pace (see duelRule). Neither leaves embers.
+  seal: { health: 140, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
+  duchess: { health: 850, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
 }
 
 // The Gardener's trial is optional. From `from` seconds the bell on his grave
@@ -153,24 +153,29 @@ export const blessings = {
   fireflies: { swarms: 2 },
 }
 
-// The throne garden fits one screen. The Duchess sits under the arch; a
-// seal-flower blooms on one flowerbed after another. While a flower lives her
-// crown of vines turns every blow aside and she lashes a marked sector of the
-// garden. When the flower falls the crown opens for `window` seconds.
-export const garden = {
-  width: 1000,
-  height: 490,
-  start: { x: 500, y: 410 },
-  duchess: { x: 500, y: 96 },
-  beds: [{ x: 190, y: 310 }, { x: 810, y: 310 }, { x: 330, y: 190 }, { x: 670, y: 190 }],
+// The duel. When the dawn bell rings the waves stop and the Widow Duchess
+// walks into the same court through the north gate. A seal-flower blooms on
+// one of the `beds` around the chapel ruins, then on the next. While a flower
+// lives her crown of vines turns every blow aside, she walks after the hero at
+// `speed` and attacks. When the flower falls she stands still and open for
+// `window` seconds.
+export const duelRule = {
+  beds: [{ x: 700, y: 430 }, { x: 1300, y: 430 }, { x: 1300, y: 710 }, { x: 700, y: 710 }],
   window: 6,
-  // The lash strikes every `every` seconds after `windup` seconds of warning,
-  // across a sector `arc` degrees to each side of the warden and `range` long.
-  lash: { every: 2.8, windup: 1, arc: 26, range: 620 },
-  // The second phase begins when the Duchess is down to `at` of her health.
-  // After every `every`-th lash, the `buds` flowerbeds next to the one holding
-  // the seal-flower each let out `perBud` briarlings.
-  phase2: { at: 0.5, every: 2, buds: 2, perBud: 2 },
+  speed: 58,
+  // Each attack comes every `every` seconds after `windup` seconds of warning.
+  // The lash strikes a sector `arc` degrees to each side of the hero, `range` long.
+  lash: { every: 3, windup: 1, arc: 26, range: 520 },
+  // A volley of `thorns` thorns, fanned `spread` degrees to each side, flying `reach` pixels.
+  volley: { every: 3.8, windup: 0.7, thorns: 7, spread: 30, speed: 300, reach: 640 },
+  // A briar patch marked under the hero: it erupts and then wounds anyone inside for `life` seconds.
+  patch: { every: 4, windup: 1.1, radius: 80, life: 5 },
+  // A pack of briarlings called in from beyond the view; from the second phase a boar or archers too.
+  summon: { every: 8, pack: 5 },
+  // A new phase begins at each of these shares of her health; every phase
+  // multiplies the time between her attacks by `tempo`.
+  phases: [0.66, 0.33],
+  tempo: 0.8,
 }
 
 // The boar starts pawing within `trigger` pixels, warns for `windup` seconds,

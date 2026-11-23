@@ -446,7 +446,7 @@ test('winning opens the next difficulty and a starting relic, and the save survi
   await expect(page.locator('#record')).toContainText('Win on First Watch to open.')
   await expect(heroes.nth(0)).toBeEnabled()
   await expect(heroes.nth(1)).toBeDisabled()
-  await expect(heroes.nth(1)).toContainText('Locked. Reach the throne garden once.')
+  await expect(heroes.nth(1)).toContainText('Locked. Hold out until the Duchess comes.')
   await expect(heroes.nth(2)).toContainText('Locked. Fell the Gardener once.')
   await expect(variant).toBeDisabled()
   await expect(page.locator('#variant')).toContainText('Win with this hero to start with Amber Beads.')
@@ -466,9 +466,13 @@ test('winning opens the next difficulty and a starting relic, and the save survi
   await page.clock.runFor(1500)
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    Object.assign(battle.spells.witchfire, { range: 2000, damage: 400 })
+    Object.assign(battle.spells.witchfire, { range: 4000, damage: 400 })
+    battle.immunity = 60
   })
-  for (let slice = 0; slice < 80 && await page.locator('#panel').isHidden(); slice++) await page.clock.runFor(250)
+  for (let slice = 0; slice < 200 && await page.locator('#panel').isHidden(); slice++) {
+    await page.clock.runFor(100)
+    if (await page.locator('#cards').isVisible()) await page.keyboard.press('Digit1')
+  }
   await expect(page.locator('#title')).toHaveText('The crown is lifted')
   const report = page.locator('#message')
   await expect(report).toContainText('Difficulty: First Watch.')
@@ -684,10 +688,12 @@ test('boars, archers, knights and moths fill the last minute and mark their atta
   expect(errors).toEqual([])
 })
 
-for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden'] as const) {
+for (const outcome of ['victory', 'defeat in the court', 'defeat in the duel'] as const) {
   test(outcome + ' can be translated and restarted', async ({ page }) => {
     const errors: string[] = []
     page.on('pageerror', err => errors.push(err.message))
+    // The first-run tips are behind this player, so the hint line is free for the duel.
+    await seedSave(page, { tips: everything.tips })
     await frozenClock(page)
     // Fixed entry points keep the end-to-end scenarios repeatable.
     const won = outcome === 'victory'
@@ -704,48 +710,56 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
       }, won ? 3 : 1)
       await playRun(page, false, 2500)
 
-      // The bell carries the warden, the armor and the spells into the throne garden.
-      await expect(page.getByRole('heading', { name: 'Throne Garden' })).toBeVisible()
-      await expect(page.locator('#status')).toHaveText('THE DUEL')
+      // The dawn bell: the Duchess walks into the same court, and nothing about the warden changes.
+      await expect(page.getByRole('heading', { name: 'Chapel Court' })).toBeVisible()
+      await expect(page.locator('#status')).toHaveText('THE DUCHESS COMES')
       await expect(page.locator('#clock-label')).toHaveText('THE DUCHESS')
       await expect(page.locator('#clock')).toHaveText('100%')
       await expect(page.getByRole('img', { name: `Armor ${won ? 3 : 1} of 5` })).toBeVisible()
       await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire')
-      const garden = () => page.evaluate(() => {
+      await expect(page.locator('#hint')).toHaveText(/Her crown is closed\. Break the seal-flower/)
+      const duelNow = () => page.evaluate(() => {
         const { battle } = (window as any).arena
-        return { stage: battle.stage, kinds: battle.foes.map((foe: { kind: string }) => foe.kind).sort(), shielded: battle.shielded }
+        const kinds = battle.foes.map((foe: { kind: string }) => foe.kind)
+        return {
+          stage: battle.stage, shielded: battle.shielded,
+          duchess: kinds.includes('duchess'), seal: kinds.includes('seal'),
+          inCourt: battle.player.x > 22 && battle.player.y > 22,
+        }
       })
-      expect(await garden()).toEqual({ stage: 'garden', kinds: ['duchess', 'seal'], shielded: true })
+      expect(await duelNow()).toEqual({ stage: 'duel', shielded: true, duchess: true, seal: true, inCourt: true })
       await select(page, 'ru')
-      await expect(page.getByRole('heading', { name: 'Тронный сад' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'У часовни' })).toBeVisible()
       await expect(page.locator('#clock-label')).toHaveText('КНЯГИНЯ')
-      await expect(page.locator('#status')).toHaveText('ДУЭЛЬ')
+      await expect(page.locator('#status')).toHaveText('КНЯГИНЯ ПРИШЛА')
+      await expect(page.locator('#hint')).toHaveText(/Её венец закрыт/)
       await select(page, 'en')
 
       if (won) {
         // The crown holds while the seal-flower lives, however hard the witchfire burns.
         const seal = (health: number) => page.evaluate((value: number) => {
           const { battle } = (window as any).arena
-          Object.assign(battle.spells.witchfire, { range: 2000, damage: 60 })
+          Object.assign(battle.spells.witchfire, { range: 4000, damage: 400 })
+          // Armor to spare: this part is about the crown, not about dodging.
+          battle.armor = 5
+          battle.immunity = 60
           battle.foes.find((foe: { kind: string }) => foe.kind === 'seal').health = value
         }, health)
         await seal(1e9)
         await page.clock.runFor(1500)
         await expect(page.locator('#clock')).toHaveText('100%')
         await seal(1)
-        // Once the flower falls the crown opens and the Duchess can be struck down.
-        let secondPhase = false
-        for (let slice = 0; slice < 80 && await page.locator('#panel').isHidden(); slice++) {
-          await page.clock.runFor(250)
-          const now = await garden()
-          if (!now.shielded && now.kinds.length) await expect(page.locator('#clock')).not.toHaveText('100%')
-          // Below half health the status names the second phase.
-          secondPhase ||= (await page.locator('#status').innerText()) === 'THE BUDS OPEN'
+        // Once the flower falls the crown opens, the hint changes, and she can be struck down.
+        let open = false
+        for (let slice = 0; slice < 120 && await page.locator('#panel').isHidden(); slice++) {
+          await page.clock.runFor(100)
+          if (await page.locator('#cards').isVisible()) await page.keyboard.press('Digit1')
+          open ||= (await page.locator('#hint').innerText()).startsWith('Her crown is open')
         }
-        expect(secondPhase).toBe(true)
+        expect(open).toBe(true)
       } else {
-        // A warden who stands still in the marked sector is struck by the lash.
-        await playRun(page, false, 8000)
+        // A warden who stands still is struck down by her lash, thorns and briars.
+        await playRun(page, false, 15_000)
       }
     } else {
       // A warden who never moves holds out until the boars arrive.
@@ -760,14 +774,14 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
     const level = await page.locator('#level').innerText()
     expect(report).toContain('Level reached: ' + level)
     expect(report).toContain('Spells: Witchfire')
-    if (duel) expect(report).toContain(`Duel phase reached: ${won ? 2 : 1} of 2.`)
+    if (duel) expect(report).toContain(`Duel phase reached: ${won ? 3 : 1} of 3.`)
     else expect(report).not.toContain('Duel phase')
     if (duel) expect(time).toMatch(/^09:[0-2]\d$/)
     if (won) {
       expect(report).not.toContain('The watch ended')
       await expect(page.locator('#clock')).toHaveText('0%')
     } else {
-      expect(report).toContain(duel ? 'The watch ended in the throne garden.' : 'The watch ended in the chapel court.')
+      expect(report).toContain(duel ? 'The watch ended in the duel with the Duchess.' : 'The watch ended before dawn.')
       // The maximum may have grown if a pilgrim's cloak turned up on the way.
       await expect(page.getByRole('img', { name: /^Armor 0 of \d$/ })).toBeVisible()
     }
@@ -775,8 +789,8 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the garden']
     await select(page, 'ru')
     await expect(page.locator('#title')).toHaveText(won ? 'Венец снят' : 'Терновник победил')
     await expect(page.locator('#message')).toContainText(`Время в бою — ${time}. Изгнано врагов — ${kills}. Достигнут уровень — ${level}. Заклинания: Ведьмин огонь`)
-    if (duel) await expect(page.locator('#message')).toContainText(`Достигнута фаза дуэли: ${won ? 2 : 1} из 2.`)
-    if (!won) await expect(page.locator('#message')).toContainText(duel ? 'Дозор окончен в тронном саду.' : 'Дозор окончен у часовни.')
+    if (duel) await expect(page.locator('#message')).toContainText(`Достигнута фаза дуэли: ${won ? 3 : 1} из 3.`)
+    if (!won) await expect(page.locator('#message')).toContainText(duel ? 'Дозор окончен в дуэли с Княгиней.' : 'Дозор окончен до рассвета.')
     await page.getByRole('button', { name: 'Ещё раз' }).click()
     await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
     await expect(page.getByRole('heading', { name: 'У часовни' })).toBeVisible()
