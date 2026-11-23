@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#181a18" />
+    <title data-copy="pageTitle">Lower Circuit · Sector 07</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand">
+          <i class="emblem" aria-hidden="true"></i><span data-copy="brand">LOWER CIRCUIT</span>
+        </div>
+        <span class="status" id="status">STANDBY</span>
+        <div class="languages" role="group" data-label="language" aria-label="Interface language">
+          <button type="button" id="en" lang="en" aria-label="English" aria-pressed="true">EN</button>
+          <button type="button" id="ru" lang="ru" aria-label="Русский" aria-pressed="false">RU</button>
+        </div>
+      </header>
+      <section class="console" data-label="console" aria-label="Game console">
+        <div class="telemetry">
+          <div class="sector">
+            <small data-copy="station">UNDERGROUND STATION</small>
+            <h1 data-copy="sector">Sector 07</h1>
+          </div>
+          <div class="instruments">
+            <div>
+              <small data-copy="armor">ARMOR</small>
+              <strong class="armor" id="armor" role="img" aria-label="Armor 5 of 5"><i></i><i></i><i></i><i></i><i></i></strong>
+            </div>
+            <div><small data-copy="timer">UNTIL RESET</small><strong id="clock">01:00</strong></div>
+            <div><small data-copy="kills">DRONES DOWN</small><strong id="kills">00</strong></div>
+          </div>
+        </div>
+        <div class="arena" id="arena">
+          <div id="game" role="group" data-label="arena" aria-label="Station arena, top view"></div>
+          <div class="panel" id="panel" role="region" aria-labelledby="title">
+            <span class="eyebrow" id="panel-label">SURVIVAL PROTOCOL</span>
+            <h2 id="title">Emergency reset</h2>
+            <p id="message">Survive for 60 seconds while the station resets. Keep moving between drones. Your weapon automatically hits the nearest target.</p>
+            <button id="action" disabled>Loading arena…</button>
+          </div>
+        </div>
+        <div class="controls">
+          <div class="keys">
+            <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span data-copy="controls">or arrow keys to move</span>
+          </div>
+          <button class="pause" id="pause" disabled><kbd>Esc</kbd><span data-copy="pause">Pause</span></button>
+        </div>
+      </section>
+      <footer>
+        <span><i class="operator-dot"></i><span data-copy="engineer">Engineer</span></span>
+        <span><i class="drone-dot"></i><span data-copy="drone">Scout drone</span></span>
+        <span class="equipment"><span data-copy="weapon">Weapon</span><b>/</b><span data-copy="discharge">Arc discharge</span></span>
+      </footer>
+      <noscript>Enable JavaScript to play. <span lang="ru">Для игры включите JavaScript.</span></noscript>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
