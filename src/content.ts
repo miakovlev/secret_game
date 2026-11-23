@@ -79,7 +79,9 @@ export const leveling = { first: 5, growth: 3 }
 // Seconds of waves before dawn.
 export const run = { duration: 540 }
 
-export const foeKinds = ['briarling', 'marked', 'boar', 'archer', 'knight', 'moth', 'seal', 'duchess'] as const
+export const foeKinds = [
+  'briarling', 'marked', 'boar', 'archer', 'knight', 'moth', 'gardener', 'seal', 'duchess',
+] as const
 export type FoeKind = (typeof foeKinds)[number]
 
 // Later foes are tougher and quicker: each value grows per second of the run.
@@ -108,9 +110,32 @@ export const foes: Record<FoeKind, FoeStats> = {
   knight: { health: 70, healthGrowth: 0.1, speed: 58, speedSpread: 6, speedGrowth: 0.02, reach: 26, ember: 6 },
   // A healer moth: frail, hangs back and mends the most wounded foe near it.
   moth: { health: 12, healthGrowth: 0.02, speed: 105, speedSpread: 10, speedGrowth: 0, reach: 16, ember: 4 },
+  // The Gardener rises only if the hero rings the bell on his grave.
+  gardener: { health: 190, healthGrowth: 0.12, speed: 26, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 10 },
   // The seal-flower and the Duchess stand still in the throne garden and leave no embers.
   seal: { health: 150, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
   duchess: { health: 900, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+}
+
+// The Gardener's trial is optional. From `from` seconds the bell on his grave
+// is awake; a hero who stands within `reach` pixels of it for `ring` seconds
+// calls him out. He stoops for `summon` seconds, safe from every blow, and
+// pulls `pack` briarlings out of the ground; then he straightens and the white
+// flower on his chest stays open for `open` seconds. The waves go on meanwhile.
+export const gardenerRule = { from: 240, reach: 60, ring: 1.5, summon: 2.2, open: 6, pack: 3 }
+
+// Felling the Gardener blesses one learned spell.
+export const blessings = {
+  // Witchfire: foes within `radius` of the target take `share` of the spark.
+  witchfire: { radius: 60, share: 0.5 },
+  // Moon blade: the swing lingers for `life` seconds, cutting again every `beat` for `share` of its damage.
+  moonblade: { life: 0.9, beat: 0.3, share: 0.3 },
+  // Funeral toll: a second stroke `delay` seconds later for `share` of the damage.
+  toll: { delay: 0.45, share: 0.6 },
+  // Fire seeds: a burst sets off every seed within `radius`.
+  seeds: { radius: 130 },
+  // Firefly spirits: the swarm is multiplied by `swarms`.
+  fireflies: { swarms: 2 },
 }
 
 // The throne garden fits one screen. The Duchess sits under the arch; a

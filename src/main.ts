@@ -2,12 +2,12 @@ import Phaser from 'phaser'
 import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Phase, Shot } from './battle'
 import {
-  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, relicRule,
+  archerVolley, boarCharge, court, foes, garden, gardenerRule, heroes, heroIds, loadout, relicRule,
 } from './content'
 import type { HeroId, RelicId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture, gardenTexture,
-  heroTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
+  gardenerTexture, heroTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -35,6 +35,7 @@ const clockLabel = document.querySelector<HTMLElement>('#clock-label')!
 const heroList = document.querySelector<HTMLElement>('#heroes')!
 const heroName = document.querySelector<HTMLElement>('#hero-name')!
 const relicList = document.querySelector<HTMLElement>('#relics')!
+const hint = document.querySelector<HTMLElement>('#hint')!
 const cardsLabel = document.querySelector<HTMLElement>('#cards-label')!
 const cardsMessage = document.querySelector<HTMLElement>('#cards-message')!
 const directions = new Set([
@@ -124,6 +125,7 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('marked', markedTexture())
     this.textures.addCanvas('knight', knightTexture())
     this.textures.addCanvas('moth', mothTexture())
+    this.textures.addCanvas('gardener', gardenerTexture())
     this.textures.addCanvas('reliquary', reliquaryTexture())
     // The running scene, for browser tests and for poking at it from the console.
     Object.assign(window, { arena: this })
@@ -256,7 +258,7 @@ class Arena extends Phaser.Scene {
       for (const event of this.battle.step(dt, dx, dy)) {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
         const span = {
-          pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, bloom: 0.22, summon: 0.5, rise: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
@@ -303,7 +305,7 @@ class Arena extends Phaser.Scene {
       image.setVisible(!!foe)
       if (!foe) return
       if (image.texture.key !== foe.kind) image.setTexture(foe.kind)
-      const rooted = foe.kind === 'seal' || foe.kind === 'duchess'
+      const rooted = foe.kind === 'seal' || foe.kind === 'duchess' || foe.kind === 'gardener'
       const locked = foe.mode !== 'chase' && foe.mode !== 'rest'
       const pawing = foe.mode === 'windup' ? Math.sin(b.elapsed * 70) * 2 : 0
       image
@@ -317,13 +319,13 @@ class Arena extends Phaser.Scene {
         )
       if (rooted) {
         // A health bar under each rooted thing; the seal is tied to the crown.
-        const span = foe.kind === 'duchess' ? 96 : 44
+        const span = foe.kind === 'seal' ? 44 : 96
         const left = foe.x - span / 2
-        const below = foe.y + (foe.kind === 'duchess' ? 62 : 30)
+        const below = foe.y + (foe.kind === 'seal' ? 30 : 62)
         w.fillStyle(0x17131c, 0.8)
         w.fillRect(left - 1, below - 1, span + 2, 7)
-        w.fillStyle(foe.kind === 'duchess' ? 0xe7bd78 : 0xd877e6, 1)
-        w.fillRect(left, below, (span * Math.max(0, foe.health)) / foes[foe.kind].health, 5)
+        w.fillStyle(foe.kind === 'seal' ? 0xd877e6 : 0xe7bd78, 1)
+        w.fillRect(left, below, (span * Math.max(0, foe.health)) / foe.full, 5)
       }
       if (foe.mode === 'windup') {
         const progress = 1 - foe.timer / boarCharge.windup
@@ -349,6 +351,41 @@ class Arena extends Phaser.Scene {
         )
       }
     })
+    // The Gardener's grave: a glowing bell while it waits, filling as it is rung.
+    const pulse = 0.5 + 0.5 * Math.sin(b.elapsed * 6)
+    if (b.stage === 'court' && b.trial === 'ready') {
+      const { x, y } = court.grave
+      w.lineStyle(3, 0xffe08a, 0.35 + 0.4 * pulse)
+      w.strokeCircle(x, y, gardenerRule.reach)
+      w.fillStyle(0xffe08a, 0.25)
+      w.slice(x, y, gardenerRule.reach, -Math.PI / 2, -Math.PI / 2 + (2 * Math.PI * b.ringing) / gardenerRule.ring).fillPath()
+    }
+    // An arrow at the edge of the view points to the grave, or to the risen Gardener.
+    const lord = b.foes.find(foe => foe.kind === 'gardener')
+    const beacon = b.stage !== 'court' ? undefined : lord ?? (b.trial === 'ready' ? court.grave : undefined)
+    if (beacon) {
+      const view = b.camera()
+      const inside =
+        beacon.x > view.x && beacon.x < view.x + court.view.width &&
+        beacon.y > view.y && beacon.y < view.y + court.view.height
+      if (!inside) {
+        const turn = Math.atan2(beacon.y - b.player.y, beacon.x - b.player.x)
+        const ax = Math.max(view.x + 26, Math.min(view.x + court.view.width - 26, beacon.x))
+        const ay = Math.max(view.y + 26, Math.min(view.y + court.view.height - 26, beacon.y))
+        w.fillStyle(lord ? 0xf4f1e6 : 0xffe08a, 0.6 + 0.4 * pulse)
+        w.beginPath()
+        w.moveTo(ax + Math.cos(turn) * 14, ay + Math.sin(turn) * 14)
+        w.lineTo(ax + Math.cos(turn + 2.5) * 12, ay + Math.sin(turn + 2.5) * 12)
+        w.lineTo(ax + Math.cos(turn - 2.5) * 12, ay + Math.sin(turn - 2.5) * 12)
+        w.closePath()
+        w.fillPath()
+      }
+    }
+    // Blessed blade swings linger as silver trails.
+    for (const trail of b.trails) {
+      w.fillStyle(0xcfd8ff, 0.14)
+      w.slice(trail.at.x, trail.at.y, trail.range, trail.facing - trail.arc, trail.facing + trail.arc).fillPath()
+    }
     // Fire seeds wait on the ground; firefly spirits ride their ring.
     for (const seed of b.seeds) {
       const glow = 0.5 + 0.5 * Math.sin(b.elapsed * 8 + seed.x)
@@ -414,8 +451,8 @@ class Arena extends Phaser.Scene {
     if (flies) {
       g.lineStyle(1, 0xd8f59a, 0.12)
       g.strokeCircle(b.player.x, b.player.y, flies.range)
-      for (let i = 0; i < fireflyRule.count; i++) {
-        const turn = b.flyTurn + (i * 2 * Math.PI) / fireflyRule.count
+      for (let i = 0; i < b.swarmSize; i++) {
+        const turn = b.flyTurn + (i * 2 * Math.PI) / b.swarmSize
         const x = b.player.x + Math.cos(turn) * flies.range
         const y = b.player.y + Math.sin(turn) * flies.range
         g.fillStyle(0xd8f59a, 0.3)
@@ -446,6 +483,14 @@ class Arena extends Phaser.Scene {
       } else if (event.type === 'sting') {
         g.lineStyle(2, 0xd8f59a, fade)
         g.strokeCircle(event.at.x, event.at.y, 6 + (1 - fade) * 10)
+      } else if (event.type === 'bloom') {
+        g.fillStyle(0xff8a3c, 0.28 * fade)
+        g.fillCircle(event.at.x, event.at.y, event.radius * (0.5 + 0.5 * (1 - fade)))
+        g.lineStyle(2, 0xffd27a, fade)
+        g.strokeCircle(event.at.x, event.at.y, event.radius * (0.5 + 0.5 * (1 - fade)))
+      } else if (event.type === 'summon' || event.type === 'rise') {
+        g.lineStyle(4, 0x9fc38a, fade)
+        g.strokeCircle(event.at.x, event.at.y, 30 + (1 - fade) * 70)
       } else if (event.type === 'mend') {
         // The golden thread from a moth to the foe it mends.
         g.lineStyle(2.5, 0xffe08a, 0.8 * fade)
@@ -491,6 +536,23 @@ class Arena extends Phaser.Scene {
       g.lineStyle(1.5, 0xffdb93, fade)
       g.strokeCircle(to.x, to.y, 4 + progress * 8)
     }
+    // The flower on the Gardener's chest: white and wide while he can be struck.
+    if (lord) {
+      const open = lord.mode === 'open'
+      g.fillStyle(open ? 0xf4f1e6 : 0x3d4a36, 1)
+      g.fillCircle(lord.x, lord.y, open ? 13 + 2 * pulse : 7)
+      if (open) {
+        g.fillStyle(0xffe08a, 1)
+        g.fillCircle(lord.x, lord.y, 5)
+        g.lineStyle(2, 0xf4f1e6, 0.5 + 0.4 * pulse)
+        g.strokeCircle(lord.x, lord.y, 48)
+      }
+    }
+    const tip = b.phase !== 'playing' || b.stage !== 'court'
+      ? ''
+      : lord ? messages[language].trialHint : b.trial === 'ready' ? messages[language].bellHint : ''
+    if (hint.textContent !== tip) hint.textContent = tip
+    hint.hidden = !tip
     const timer = lady
       ? Math.ceil((100 * Math.max(0, lady.health)) / foes.duchess.health) + '%'
       : b.stage === 'garden'
@@ -509,7 +571,7 @@ class Arena extends Phaser.Scene {
       xp.setAttribute('aria-label', messages[language].xpValue(b.xp, goal))
       this.lastGrowth = growth
     }
-    const learned = b.loadout.join() + JSON.stringify(b.relics)
+    const learned = b.loadout.join() + JSON.stringify(b.relics) + JSON.stringify(b.blessed)
     if (this.lastSlots !== learned) {
       const copy = messages[language]
       const held = Object.entries(b.relics)
@@ -530,7 +592,7 @@ class Arena extends Phaser.Scene {
           const spell = b.loadout[index]
           slot.setAttribute('role', 'listitem')
           slot.className = spell ? '' : 'empty'
-          slot.textContent = spell ? copy.spells[spell].name : '—'
+          slot.textContent = spell ? copy.spells[spell].name + (b.blessed[spell] ? ' ✦' : '') : '—'
           if (!spell) slot.setAttribute('aria-label', copy.emptySlot)
           return slot
         }),
@@ -568,10 +630,13 @@ class Arena extends Phaser.Scene {
   private showCards() {
     const copy = messages[language]
     const chest = this.battle.openingChest
-    cardsLabel.textContent = chest ? copy.chestLabel : copy.chooseLabel
-    status.textContent = chest ? copy.chestLabel : copy.status.choosing
-    cardsTitle.textContent = chest ? copy.chestTitle : copy.levelTitle(this.battle.choiceLevel)
-    cardsMessage.textContent = chest ? copy.chestMessage : copy.chooseMessage
+    const bless = this.battle.blessing
+    cardsLabel.textContent = chest ? copy.chestLabel : bless ? copy.blessLabel : copy.chooseLabel
+    status.textContent = chest ? copy.chestLabel : bless ? copy.blessLabel : copy.status.choosing
+    cardsTitle.textContent = chest
+      ? copy.chestTitle
+      : bless ? copy.blessTitle : copy.levelTitle(this.battle.choiceLevel)
+    cardsMessage.textContent = chest ? copy.chestMessage : bless ? copy.blessMessage : copy.chooseMessage
     choices.replaceChildren(
       ...this.battle.offer.map((card, index) => {
         const button = document.createElement('button')
@@ -581,7 +646,12 @@ class Arena extends Phaser.Scene {
         const detail = document.createElement('span')
         button.type = 'button'
         key.textContent = String(index + 1)
-        if (card.kind === 'relic') {
+        if (card.kind === 'bless') {
+          button.className = 'bless'
+          group.textContent = copy.blessGroup
+          name.textContent = copy.spells[card.spell].name
+          detail.textContent = copy.blessings[card.spell]
+        } else if (card.kind === 'relic') {
           const relic = copy.relics[card.relic]
           button.className = 'relic'
           group.textContent = card.level === 1 ? copy.newRelic : copy.relicLevel(card.level)
@@ -629,6 +699,7 @@ class Arena extends Phaser.Scene {
         copy.result(timeText(Math.floor(b.elapsed)), b.kills, b.level),
         copy.build(b.loadout.map(id => copy.spells[id].name).join(', ')),
         copy.heroLine(copy.heroes[b.hero].name),
+        ...b.loadout.filter(id => b.blessed[id]).map(id => copy.blessLine(copy.spells[id].name)),
         ...(Object.keys(b.relics).length
           ? [copy.relicLine(Object.entries(b.relics).map(([id, level]) => `${copy.relics[id as RelicId].name} ${level}`).join(', '))]
           : []),

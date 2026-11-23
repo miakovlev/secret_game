@@ -1,5 +1,5 @@
 import {
-  archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, leveling, loadout, mothHeal, oil, relicIds,
+  archerVolley, blessings, boarCharge, court, fireflyRule, foes, garden, gardenerRule, heroes, leveling, loadout, mothHeal, oil, relicIds,
   relicRule,
   relics, run, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
@@ -13,7 +13,8 @@ export type Point = { x: number; y: number }
 // A foe chases the warden by default. A boar goes chase → windup → charge →
 // rest; an archer goes chase → aim → volley. `timer` counts down the current
 // mode (or an archer's reload), `dir` is the locked direction of a charge or volley.
-export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley'
+// The Gardener alternates summon (stooped, untouchable) and open (flower bared).
+export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley' | 'summon' | 'open'
 export type Foe = Point & {
   kind: FoeKind
   speed: number
@@ -40,6 +41,10 @@ export type BattleEvent =
   | { type: 'pickup'; at: Point }
   | { type: 'heal'; at: Point }
   | { type: 'chest'; at: Point }
+  | { type: 'bell' }
+  | { type: 'rise'; at: Point }
+  | { type: 'summon'; at: Point }
+  | { type: 'bloom'; at: Point; radius: number }
   | { type: 'open'; at: Point }
   | { type: 'arrow'; at: Point }
   | ({ type: 'mend' } & Shot)
@@ -60,6 +65,12 @@ export type Choice =
   | { kind: 'learn'; spell: SpellId }
   | { kind: 'upgrade'; spell: SpellId; id: UpgradeId; from: number; to: number }
   | { kind: 'relic'; relic: RelicId; level: number }
+  | { kind: 'bless'; spell: SpellId }
+// The Gardener's trial: his bell sleeps, wakes, is rung, and the trial ends
+// won or closed by the dawn bell.
+export type Trial = 'asleep' | 'ready' | 'fighting' | 'won' | 'closed'
+// A blessed blade swing that lingers in the air.
+export type Trail = { at: Point; facing: number; range: number; arc: number; cuts: number; beat: number }
 
 // Experience needed to leave the given level.
 export function xpGoal(level: number) {
@@ -90,6 +101,14 @@ export class Battle {
   // Relics held, in the order taken, with their levels; opened reliquaries awaiting a choice.
   relics: Partial<Record<RelicId, number>> = {}
   chests = 0
+  // The Gardener's trial, how long the hero has stood by the bell, blessings
+  // earned but not yet chosen, and the spells already blessed.
+  trial: Trial = 'asleep'
+  ringing = 0
+  boons = 0
+  blessed: Partial<Record<SpellId, boolean>> = {}
+  trails: Trail[] = []
+  echoes: number[] = []
   arrows: Arrow[] = []
   xp = 0
   level = 1
@@ -265,7 +284,7 @@ export class Battle {
     for (const other of this.foes) {
       const lost = other.full - other.health
       const near = Math.hypot(other.x - foe.x, other.y - foe.y) < range
-      if (other.kind !== 'moth' && near && lost > worst) {
+      if (other.kind !== 'moth' && other.kind !== 'gardener' && near && lost > worst) {
         patient = other
         worst = lost
       }
@@ -335,6 +354,16 @@ export class Battle {
       this.chests--
       this.mend()
     }
+    while (this.boons) {
+      const cards: Choice[] = this.loadout
+        .filter(spell => !this.blessed[spell])
+        .map(spell => ({ kind: 'bless', spell }))
+      if (cards.length) {
+        this.offer = cards
+        return true
+      }
+      this.boons--
+    }
     if (!this.pending) return false
     this.dealSpells()
     return true
@@ -371,6 +400,15 @@ export class Battle {
     return this.chests > 0
   }
 
+  // Whether the cards on offer are the Gardener's blessing.
+  get blessing() {
+    return !this.chests && this.boons > 0
+  }
+
+  get swarmSize() {
+    return fireflyRule.count * (this.blessed.fireflies ? blessings.fireflies.swarms : 1)
+  }
+
   // The level the current set of cards belongs to.
   get choiceLevel() {
     return this.level - this.pending + 1
@@ -384,6 +422,9 @@ export class Battle {
       // A new pip of the pilgrim's cloak arrives whole.
       if (card.relic === 'cloak') this.mend()
       this.chests--
+    } else if (card.kind === 'bless') {
+      this.blessed[card.spell] = true
+      this.boons--
     } else {
       if (card.kind === 'learn') {
         this.loadout.push(card.spell)
@@ -425,6 +466,11 @@ export class Battle {
     this.reliquaries = []
     this.arrows = []
     this.seeds = []
+    this.trails = []
+    this.echoes = []
+    // A trial not finished by dawn is over.
+    if (this.trial !== 'won') this.trial = 'closed'
+    this.ringing = 0
     this.foes = [makeFoe('duchess', garden.duchess.x, garden.duchess.y, 0, foes.duchess.health)]
     this.bloom()
     events.push({ type: 'garden' })
@@ -461,10 +507,62 @@ export class Battle {
     this.lash = { timer: lash.every, warned: false, facing: 0 }
   }
 
-  // Foes a spell may hit: a shielded Duchess cannot be hurt or even aimed at.
+  // Foes a spell may hit: a shielded Duchess and a stooped Gardener cannot be
+  // hurt or even aimed at.
   private targets() {
     const guarded = this.shielded
-    return this.foes.filter(foe => foe.kind !== 'duchess' || !guarded)
+    return this.foes.filter(foe =>
+      foe.kind === 'duchess' ? !guarded : foe.kind !== 'gardener' || foe.mode === 'open',
+    )
+  }
+
+  // The bell wakes in the middle of the run; standing by it calls the Gardener out.
+  private bell(dt: number, events: BattleEvent[]) {
+    if (this.trial === 'asleep' && this.elapsed >= gardenerRule.from) {
+      this.trial = 'ready'
+      events.push({ type: 'bell' })
+    }
+    if (this.trial !== 'ready') return
+    const { x, y } = court.grave
+    const near = Math.hypot(this.player.x - x, this.player.y - y) < gardenerRule.reach
+    this.ringing = near ? this.ringing + dt : 0
+    if (this.ringing < gardenerRule.ring) return
+    this.trial = 'fighting'
+    this.ringing = 0
+    const stats = foes.gardener
+    const risen = makeFoe('gardener', x, y, stats.speed, stats.health + this.elapsed * stats.healthGrowth)
+    risen.mode = 'summon'
+    risen.timer = gardenerRule.summon
+    this.foes.push(risen)
+    // He comes up right beside the hero: a moment of mercy to step away.
+    this.immunity = Math.max(this.immunity, 1.5)
+    events.push({ type: 'rise', at: { x, y } })
+  }
+
+  private gardener(foe: Foe, dt: number, toward: Point, events: BattleEvent[]) {
+    foe.x += toward.x * dt * foe.speed
+    foe.y += toward.y * dt * foe.speed
+    if (foe.timer > 0) return
+    if (foe.mode === 'open') {
+      foe.mode = 'summon'
+      foe.timer = gardenerRule.summon
+      return
+    }
+    // He pulls briarlings out of the ground around him, then straightens.
+    const stats = foes.briarling
+    for (let i = 0; i < gardenerRule.pack; i++) {
+      const turn = (i * 2 * Math.PI) / gardenerRule.pack + Math.PI / 4
+      this.foes.push(makeFoe(
+        'briarling',
+        foe.x + Math.cos(turn) * 52,
+        foe.y + Math.sin(turn) * 52,
+        stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
+        stats.health + this.elapsed * stats.healthGrowth,
+      ))
+    }
+    foe.mode = 'open'
+    foe.timer = gardenerRule.open
+    events.push({ type: 'summon', at: { x: foe.x, y: foe.y } })
   }
 
   private strike(foe: Foe, damage: number, events: BattleEvent[]) {
@@ -483,6 +581,11 @@ export class Battle {
       events.push({ type: 'crown', open: true })
     } else {
       this.embers.push({ ...fallen, value: foes[foe.kind].ember })
+      if (foe.kind === 'gardener') {
+        // The trial is won: one blessing, once.
+        this.trial = 'won'
+        this.boons++
+      }
       if (foe.kind === 'marked') {
         this.reliquaries.push(fallen)
         events.push({ type: 'chest', at: fallen })
@@ -491,24 +594,32 @@ export class Battle {
     }
   }
 
-  // Seeds on the ground burst under the first foe to reach them.
+  // Seeds on the ground burst under the first foe to reach them. A blessed
+  // burst wakes every seed near it, and those wake their own neighbours.
   private burst(stats: Stats, dt: number, events: BattleEvent[]) {
-    this.seeds = this.seeds.filter(seed => {
-      seed.life -= dt
-      const near = (reach: number) =>
-        this.targets().filter(foe => Math.hypot(foe.x - seed.x, foe.y - seed.y) < reach)
-      if (!near(seedRule.trigger).length) return seed.life > 0
+    const gap = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y)
+    for (const seed of this.seeds) seed.life -= dt
+    const woken = this.seeds.filter(seed =>
+      this.targets().some(foe => gap(foe, seed) < seedRule.trigger),
+    )
+    for (const seed of woken) {
       events.push({ type: 'burst', at: { x: seed.x, y: seed.y }, radius: stats.range })
-      for (const foe of near(stats.range)) this.strike(foe, stats.damage, events)
-      return false
-    })
+      for (const foe of this.targets()) {
+        if (gap(foe, seed) < stats.range) this.strike(foe, stats.damage, events)
+      }
+      if (!this.blessed.seeds) continue
+      for (const other of this.seeds) {
+        if (!woken.includes(other) && gap(other, seed) < blessings.seeds.radius) woken.push(other)
+      }
+    }
+    this.seeds = this.seeds.filter(seed => seed.life > 0 && !woken.includes(seed))
   }
 
   // The firefly ring turns all the time and stings whatever it crosses.
   private swarm(stats: Stats, dt: number, events: BattleEvent[]) {
     this.flyTurn += (stats.spin * Math.PI * dt) / 180
-    for (let i = 0; i < fireflyRule.count; i++) {
-      const turn = this.flyTurn + (i * 2 * Math.PI) / fireflyRule.count
+    for (let i = 0; i < this.swarmSize; i++) {
+      const turn = this.flyTurn + (i * 2 * Math.PI) / this.swarmSize
       const x = this.player.x + Math.cos(turn) * stats.range
       const y = this.player.y + Math.sin(turn) * stats.range
       for (const foe of this.targets()) {
@@ -525,7 +636,46 @@ export class Battle {
     const at = { ...this.player }
     const gift = heroes[this.hero]
     const reach = (foe: Foe) => Math.hypot(foe.x - at.x, foe.y - at.y)
+    const inSwing = (foe: Foe, from: Point, facing: number, range: number, arc: number) => {
+      const turn = Math.atan2(foe.y - from.y, foe.x - from.x) - facing
+      const aside = Math.abs(Math.atan2(Math.sin(turn), Math.cos(turn)))
+      return Math.hypot(foe.x - from.x, foe.y - from.y) < range && aside <= arc
+    }
+    // The bell stroke itself, shared by the toll and its blessed echo.
+    const toll = (stats: Stats, share: number) => {
+      const struck = this.targets().filter(foe => reach(foe) < stats.range)
+      events.push({ type: 'toll', at, radius: stats.range })
+      for (const foe of struck) {
+        // Rooted and heavy things take the blow but stay where they are.
+        if (!foes[foe.kind].speed || foe.kind === 'gardener') continue
+        const distance = reach(foe) || 1
+        const push = stats.knockback * gift.knockback
+        foe.x += ((foe.x - at.x) / distance) * push
+        foe.y += ((foe.y - at.y) / distance) * push
+      }
+      for (const foe of struck) this.strike(foe, stats.damage * share, events)
+    }
     for (const foe of this.foes) foe.stung = Math.max(0, foe.stung - dt)
+    // Blessed leftovers of earlier casts: silver trails and bell echoes.
+    if (this.spells.moonblade) {
+      const { beat, share } = blessings.moonblade
+      const { damage } = this.stats('moonblade')
+      this.trails = this.trails.filter(trail => {
+        trail.beat -= dt
+        if (trail.beat > 0) return true
+        trail.beat += beat
+        trail.cuts--
+        for (const foe of this.targets()) {
+          if (inSwing(foe, trail.at, trail.facing, trail.range, trail.arc)) this.strike(foe, damage * share, events)
+        }
+        return trail.cuts > 0
+      })
+    }
+    if (this.spells.toll) {
+      this.echoes = this.echoes.map(left => left - dt)
+      for (const left of this.echoes) if (left <= 0) toll(this.stats('toll'), blessings.toll.share)
+      this.echoes = this.echoes.filter(left => left > 0)
+    }
     for (const id of this.loadout) {
       const stats = this.stats(id)
       if (id === 'seeds') this.burst(stats, dt, events)
@@ -553,6 +703,16 @@ export class Battle {
         events.push({ type: 'shot', from: at, to: { x: hit.x, y: hit.y } })
         // The warden's gift: every few sparks one leaps on to a neighbour.
         this.sparks++
+        if (this.blessed.witchfire) {
+          // The Gardener's blessing: the spark blooms and scorches the neighbours.
+          const { radius, share } = blessings.witchfire
+          events.push({ type: 'bloom', at: { x: hit.x, y: hit.y }, radius })
+          for (const foe of open) {
+            if (foe !== hit && Math.hypot(foe.x - hit.x, foe.y - hit.y) < radius) {
+              this.strike(foe, stats.damage * share, events)
+            }
+          }
+        }
         if (gift.chain && this.sparks % gift.chain === 0) {
           const far = (foe: Foe) => Math.hypot(foe.x - hit.x, foe.y - hit.y)
           const next = open
@@ -565,23 +725,15 @@ export class Battle {
         }
       } else if (id === 'moonblade') {
         const arc = (stats.arc * Math.PI) / 180
-        struck = open.filter(foe => {
-          const turn = Math.atan2(foe.y - at.y, foe.x - at.x) - this.facing
-          const aside = Math.abs(Math.atan2(Math.sin(turn), Math.cos(turn)))
-          return reach(foe) < stats.range && aside <= arc
-        })
+        struck = open.filter(foe => inSwing(foe, at, this.facing, stats.range, arc))
         events.push({ type: 'slash', at, facing: this.facing, range: stats.range, arc })
-      } else if (id === 'toll') {
-        struck = open.filter(foe => reach(foe) < stats.range)
-        events.push({ type: 'toll', at, radius: stats.range })
-        for (const foe of struck) {
-          // Rooted things take the blow but stay where they are.
-          if (!foes[foe.kind].speed) continue
-          const distance = reach(foe) || 1
-          const push = stats.knockback * gift.knockback
-          foe.x += ((foe.x - at.x) / distance) * push
-          foe.y += ((foe.y - at.y) / distance) * push
+        if (this.blessed.moonblade) {
+          const { life, beat } = blessings.moonblade
+          this.trails.push({ at, facing: this.facing, range: stats.range, arc, cuts: Math.round(life / beat), beat })
         }
+      } else if (id === 'toll') {
+        toll(stats, 1)
+        if (this.blessed.toll) this.echoes.push(blessings.toll.delay)
       } else {
         // Fire seeds fall only on the path of a hero who is moving.
         if (!moving) continue
@@ -624,6 +776,7 @@ export class Battle {
 
     // The schedule runs on the clock of the run, so a pause never shifts it
     // and every group enters exactly once.
+    if (this.stage === 'court') this.bell(dt, events)
     if (this.stage === 'garden') this.duel(dt, events)
     else waves.forEach((wave, index) => {
       const due = bursts(wave, this.elapsed)
@@ -646,6 +799,8 @@ export class Battle {
         this.archer(foe, dt, distance, toward, events)
       } else if (foe.kind === 'moth') {
         this.moth(foe, dt, distance, toward, events)
+      } else if (foe.kind === 'gardener') {
+        this.gardener(foe, dt, toward, events)
       } else {
         const travel = Math.min(distance, dt * foe.speed)
         foe.x += toward.x * travel

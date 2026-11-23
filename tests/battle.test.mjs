@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archerVolley, boarCharge, court, fireflyRule, foes, garden, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
+import { archerVolley, blessings, boarCharge, court, fireflyRule, foes, garden, gardenerRule, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
   relics, seedRule, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
@@ -1519,4 +1519,315 @@ test('a moth hangs back at its distance instead of charging in', () => {
   const gap = near.foe.x - near.b.player.x
   assert.ok(gap >= mothHeal.keep - 62 && gap <= mothHeal.keep)
   assert.equal(near.b.armor, MAX_ARMOR)
+})
+
+// --- Step 3.4: the Gardener's trial and the blessings.
+
+// A quiet, unkillable hero standing by the grave at the given second.
+function atGrave(second = gardenerRule.from + 5) {
+  const b = runAt(second)
+  b.player = { x: court.grave.x + 20, y: court.grave.y }
+  const quiet = (frames, dx = 0, dy = 0) => {
+    const events = []
+    for (let i = 0; i < frames; i++) {
+      events.push(...b.step(1 / 60, dx, dy))
+      b.foes = b.foes.filter(foe => foe.kind === 'gardener' || foe.pulled)
+    }
+    return events
+  }
+  return { b, quiet }
+}
+
+test('the bell sleeps until the middle of the run and wakes once', () => {
+  const b = runAt(gardenerRule.from - 1)
+  b.player = { x: court.grave.x + 20, y: court.grave.y }
+  const early = []
+  for (let i = 0; i < 50; i++) early.push(...b.step(1 / 60, 0, 0))
+  assert.equal(b.trial, 'asleep')
+  assert.equal(b.ringing, 0)
+  assert.ok(!early.some(event => event.type === 'bell'))
+  const later = []
+  for (let i = 0; i < 30; i++) later.push(...b.step(1 / 60, 0, 0))
+  assert.equal(later.filter(event => event.type === 'bell').length, 1)
+  assert.equal(b.trial, 'ready')
+  assert.equal(new Battle().trial, 'asleep')
+})
+
+test('standing by the grave calls the Gardener out once; walking past does not', () => {
+  const passing = atGrave()
+  passing.b.player = { x: court.grave.x - 300, y: court.grave.y }
+  // Walk straight through the ring without stopping: under a second inside.
+  passing.quiet(Math.round((gardenerRule.ring - 0.4) * 60))
+  passing.b.player = { x: court.grave.x, y: court.grave.y + 10 }
+  passing.quiet(Math.round((gardenerRule.ring - 0.4) * 60))
+  assert.ok(passing.b.ringing > 0)
+  passing.b.player = { x: court.grave.x + gardenerRule.reach + 30, y: court.grave.y }
+  passing.quiet(5)
+  assert.equal(passing.b.ringing, 0)
+  assert.equal(passing.b.trial, 'ready')
+  assert.ok(!passing.b.foes.some(foe => foe.kind === 'gardener'))
+
+  const { b, quiet } = atGrave()
+  const events = quiet(Math.round(gardenerRule.ring * 60) + 3)
+  assert.deepEqual(events.filter(event => event.type === 'rise'), [{ type: 'rise', at: { ...court.grave } }])
+  assert.equal(b.trial, 'fighting')
+  const risen = b.foes.filter(foe => foe.kind === 'gardener')
+  assert.equal(risen.length, 1)
+  assert.equal(risen[0].mode, 'summon')
+  assert.equal(risen[0].health, risen[0].full)
+  assert.ok(b.immunity > 1.4)
+  assert.ok(risen[0].full > foes.gardener.health)
+  // Staying by the grave does not call a second one.
+  quiet(240)
+  assert.equal(b.foes.filter(foe => foe.kind === 'gardener').length, 1)
+})
+
+test('the stooped Gardener is untouchable; he pulls up briarlings, then bares his flower for a while', () => {
+  const { b } = atGrave()
+  b.spells.witchfire.range = 2000
+  b.spells.witchfire.damage = 1
+  for (let i = 0; i < Math.round(gardenerRule.ring * 60) + 3; i++) {
+    b.step(1 / 60, 0, 0)
+    b.foes = b.foes.filter(foe => foe.kind === 'gardener')
+  }
+  const lord = b.foes[0]
+  const full = lord.health
+  // Stooped: no spark touches him, and the waves keep walking in.
+  let arrivals = 0
+  const events = []
+  while (lord.mode === 'summon') {
+    const before = b.foes.length
+    const step = b.step(1 / 60, 0, 0)
+    events.push(...step)
+    if (lord.mode === 'summon') {
+      arrivals += b.foes.length - before
+      b.foes = [lord]
+      assert.equal(lord.health, full)
+    }
+  }
+  assert.ok(arrivals > 0)
+  assert.deepEqual(events.filter(event => event.type === 'summon').length, 1)
+  const pack = b.foes.filter(foe => foe.kind === 'briarling')
+  assert.ok(pack.length >= gardenerRule.pack)
+  const pulled = pack.filter(foe => Math.abs(Math.hypot(foe.x - lord.x, foe.y - lord.y) - 52) < 6)
+  assert.equal(pulled.length, gardenerRule.pack)
+
+  // Open: now he bleeds, for exactly the open time, then stoops again.
+  b.foes = [lord]
+  let open = 0
+  while (lord.mode === 'open') {
+    b.step(1 / 60, 0, 0)
+    b.foes = [lord]
+    open++
+  }
+  assert.ok(Math.abs(open / 60 - gardenerRule.open) < 0.1)
+  assert.ok(lord.health < full)
+  assert.equal(lord.mode, 'summon')
+  // He walks toward the hero all the while and is not pushed around by the toll.
+  assert.ok(Math.hypot(lord.x - court.grave.x, lord.y - court.grave.y) > 5)
+})
+
+function fellGardener(b) {
+  const lord = makeFoe('gardener', b.player.x + 80, b.player.y, 0, 0.1)
+  lord.mode = 'open'
+  lord.timer = 99
+  b.trial = 'fighting'
+  b.foes = [lord]
+  b.spells[b.loadout[0]].range = 2000
+  b.timers[b.loadout[0]] = 0
+  return b.step(1 / 60, 0, 0)
+}
+
+test('felling the Gardener gives one blessing for one learned spell, once', () => {
+  const b = playing(() => 0.5)
+  learn(b, 'toll')
+  b.spells.toll.range = 0
+  const events = fellGardener(b)
+  assert.ok(events.some(event => event.type === 'kill'))
+  assert.equal(b.trial, 'won')
+  assert.equal(b.embers.at(-1).value, foes.gardener.ember)
+  // The blessing is offered on the next step, one card per learned spell.
+  b.embers = []
+  b.step(1 / 60, 0, 0)
+  assert.equal(b.phase, 'choosing')
+  assert.ok(b.blessing)
+  assert.ok(!b.openingChest)
+  assert.deepEqual(b.offer, [{ kind: 'bless', spell: 'witchfire' }, { kind: 'bless', spell: 'toll' }])
+  b.choose(1)
+  b.choose(1)
+  assert.equal(b.phase, 'playing')
+  assert.deepEqual(b.blessed, { toll: true })
+  assert.equal(b.boons, 0)
+  assert.ok(!b.blessing)
+  // The bell stays silent afterwards.
+  b.elapsed = gardenerRule.from + 60
+  b.player = { ...court.grave }
+  b.armor = Infinity
+  advance(b, 200)
+  assert.equal(b.trial, 'won')
+  assert.ok(!b.foes.some(foe => foe.kind === 'gardener'))
+})
+
+test('a blessing is never offered twice for the same spell, and waits behind a reliquary', () => {
+  const b = playing(() => 0.5)
+  b.spells.witchfire.range = 0
+  b.blessed.witchfire = true
+  b.boons = 1
+  b.step(1 / 60, 0, 0)
+  // Nothing left to bless: the boon lapses without stopping the run.
+  assert.equal(b.phase, 'playing')
+  assert.equal(b.boons, 0)
+
+  learn(b, 'seeds')
+  b.boons = 1
+  b.reliquaries = [{ ...b.player }]
+  b.step(1 / 60, 0, 0)
+  assert.ok(b.openingChest && !b.blessing)
+  b.choose(0)
+  assert.ok(b.blessing)
+  assert.deepEqual(b.offer, [{ kind: 'bless', spell: 'seeds' }])
+  b.choose(0)
+  assert.equal(b.phase, 'playing')
+})
+
+test('the dawn bell closes an unfinished trial and leaves a won one won', () => {
+  for (const [state, after] of [['ready', 'closed'], ['fighting', 'closed'], ['asleep', 'closed'], ['won', 'won']]) {
+    const b = playing()
+    b.trial = state
+    b.ringing = 0.7
+    b.foes = [makeFoe('gardener', b.player.x + 400, b.player.y, 0, 100)]
+    b.trails = [{ at: { x: 0, y: 0 }, facing: 0, range: 10, arc: 1, cuts: 3, beat: 0.1 }]
+    b.echoes = [0.3]
+    b.elapsed = DURATION
+    b.step(1 / 60, 0, 0)
+    assert.equal(b.stage, 'garden')
+    assert.equal(b.trial, after)
+    assert.equal(b.ringing, 0)
+    assert.ok(!b.foes.some(foe => foe.kind === 'gardener'))
+    assert.deepEqual([b.trails, b.echoes], [[], []])
+    // No bell in the garden.
+    b.armor = Infinity
+    b.spells.witchfire.range = 0
+    advance(b, 120)
+    assert.equal(b.trial, after)
+  }
+})
+
+test('a moth does not mend the Gardener', () => {
+  const { b, moth, beat } = ward([['gardener', 60, 50]])
+  const lord = b.foes[1]
+  lord.mode = 'open'
+  lord.timer = 99
+  assert.deepEqual(beat(), [])
+  assert.equal(lord.health, 50)
+  assert.ok(b.foes.includes(moth))
+})
+
+test('blessed witchfire blooms on the target and scorches the foes beside it', () => {
+  const fire = blessed => {
+    const b = hero('duelist')
+    learn(b, 'witchfire')
+    b.spells.moonblade.range = 0
+    if (blessed) b.blessed.witchfire = true
+    const target = dummy(b, 50)
+    const beside = dummy(b, 50 + blessings.witchfire.radius - 10)
+    const apart = dummy(b, 50, blessings.witchfire.radius + 10)
+    const events = b.step(0, 0, 0).filter(event => event.type === 'bloom')
+    return { hits: [target, beside, apart].map(hurt), events, target }
+  }
+  assert.deepEqual(fire(false).hits, [witchfire.damage, 0, 0])
+  assert.deepEqual(fire(false).events, [])
+  const { hits, events, target } = fire(true)
+  assert.deepEqual(hits, [witchfire.damage, witchfire.damage * blessings.witchfire.share, 0])
+  assert.deepEqual(events, [{ type: 'bloom', at: { x: target.x, y: target.y }, radius: blessings.witchfire.radius }])
+})
+
+test('a blessed moon blade leaves a trail that keeps cutting where the swing was', () => {
+  const swing = blessed => {
+    const b = hero('duelist')
+    if (blessed) b.blessed.moonblade = true
+    b.armor = Infinity
+    const ahead = dummy(b, spells.moonblade.range - 20)
+    const behind = dummy(b, -40)
+    b.step(0, 0, 0)
+    // Stop the blade from swinging again, then walk away from the place of the swing.
+    b.timers.moonblade = 99
+    for (let i = 0; i < 90; i++) {
+      b.timers.moonblade = 99
+      b.step(1 / 60, 0, -1)
+      b.foes = [ahead, behind]
+    }
+    return { hits: [ahead, behind].map(hurt), b }
+  }
+  const { damage } = spells.moonblade
+  assert.deepEqual(swing(false).hits, [damage, 0])
+  const { hits, b } = swing(true)
+  const { life, beat, share } = blessings.moonblade
+  const cuts = Math.round(life / beat)
+  assert.ok(Math.abs(hits[0] - damage * (1 + cuts * share)) < 1e-9, String(hits[0]))
+  assert.equal(hits[1], 0)
+  assert.deepEqual(b.trails, [])
+})
+
+test('a blessed toll sends a second, weaker stroke from where the hero stands then', () => {
+  const ring = blessed => {
+    const b = hero('ringer')
+    if (blessed) b.blessed.toll = true
+    b.armor = Infinity
+    const foe = dummy(b, 30)
+    const tolls = []
+    for (let i = 0; i < Math.round(blessings.toll.delay * 60) + 4; i++) {
+      tolls.push(...b.step(1 / 60, 0, 0).filter(event => event.type === 'toll'))
+      b.timers.toll = 99
+      b.foes = [foe]
+      // Keep the foe in reach of the echo despite the push.
+      foe.x = b.player.x + 30
+    }
+    return { tolls: tolls.length, hurt: hurt(foe), b }
+  }
+  const { damage } = spells.toll
+  assert.deepEqual([ring(false).tolls, ring(false).hurt], [1, damage])
+  const echo = ring(true)
+  assert.equal(echo.tolls, 2)
+  assert.ok(Math.abs(echo.hurt - damage * (1 + blessings.toll.share)) < 1e-9)
+  assert.deepEqual(echo.b.echoes, [])
+})
+
+test('a blessed seed burst wakes the seeds near it, and those wake theirs', () => {
+  const sow = blessed => {
+    const b = hero('warden')
+    b.spells.witchfire.range = 0
+    learn(b, 'seeds')
+    if (blessed) b.blessed.seeds = true
+    const gap = blessings.seeds.radius - 20
+    const x = b.player.x + 300
+    b.seeds = [0, 1, 2].map(i => ({ x: x + i * gap, y: b.player.y, life: 9 }))
+    b.seeds.push({ x: x + 2 * gap + blessings.seeds.radius + 40, y: b.player.y, life: 9 })
+    const first = makeFoe('briarling', x, b.player.y, 0, 1e9)
+    const third = makeFoe('briarling', x + 2 * gap, b.player.y + 20, 0, 1e9)
+    // Standing near the third seed but not close enough to set it off itself.
+    third.y = b.player.y + spells.seeds.range - 10
+    b.foes = [first, third]
+    const bursts = b.step(1 / 60, 0, 0).filter(event => event.type === 'burst')
+    return { bursts: bursts.length, left: b.seeds.length, hits: [first, third].map(hurt) }
+  }
+  assert.ok(spells.seeds.range - 10 > seedRule.trigger)
+  assert.deepEqual(sow(false), { bursts: 1, left: 3, hits: [spells.seeds.damage, 0] })
+  assert.deepEqual(sow(true), { bursts: 3, left: 1, hits: [spells.seeds.damage, spells.seeds.damage] })
+})
+
+test('blessed fireflies light a second swarm across the ring', () => {
+  const b = hero('warden')
+  b.spells.witchfire.range = 0
+  learn(b, 'fireflies')
+  assert.equal(b.swarmSize, fireflyRule.count)
+  b.blessed.fireflies = true
+  assert.equal(b.swarmSize, fireflyRule.count * blessings.fireflies.swarms)
+  // Four spirits a quarter turn apart: foes at east and north are both stung at once.
+  const { range, damage } = spells.fireflies
+  const east = dummy(b, range)
+  const south = dummy(b, 0, range)
+  const between = dummy(b, range * Math.SQRT1_2, range * Math.SQRT1_2)
+  b.step(0, 0, 0)
+  assert.deepEqual([east, south, between].map(hurt), [damage, damage, 0])
 })

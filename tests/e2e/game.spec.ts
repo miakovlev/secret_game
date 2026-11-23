@@ -330,6 +330,88 @@ test('a reliquary offers relics that fill their own slots, level up and last the
   expect(errors).toEqual([])
 })
 
+test('ringing the bell on the grave calls the Gardener, and felling him blesses one spell', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await frozenClock(page)
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  await page.getByRole('button', { name: 'Start run' }).click()
+  const hint = page.locator('#hint')
+  const state = () => page.evaluate(() => {
+    const { battle } = (window as any).arena
+    const lord = battle.foes.find((foe: { kind: string }) => foe.kind === 'gardener')
+    return { trial: battle.trial, mode: lord?.mode, elapsed: battle.elapsed }
+  })
+  await expect(hint).toBeHidden()
+  // The fourth minute: the bell wakes, and the hint says the trial is a choice.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.elapsed = 239.8
+    battle.armor = 1e6
+  })
+  await page.clock.runFor(500)
+  await expect(hint).toHaveText(/bell on the Gardener’s grave is awake.*or walk on/)
+  expect((await state()).trial).toBe('ready')
+  await select(page, 'ru')
+  await expect(hint).toHaveText(/На могиле Садовника проснулся колокольчик/)
+  await select(page, 'en')
+
+  // Standing beside the grave long enough calls him out; the waves go on.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    // The grave stands at (1780, 860) in the court.
+    battle.player = { x: 1800, y: 860 }
+  })
+  await page.clock.runFor(1000)
+  expect((await state()).trial).toBe('ready')
+  await page.clock.runFor(900)
+  expect(await state()).toMatchObject({ trial: 'fighting', mode: 'summon' })
+  await expect(hint).toHaveText('Strike the Gardener while the white flower on his chest is open.')
+  const before = (await state()).elapsed
+  await page.clock.runFor(1000)
+  expect((await state()).elapsed).toBeGreaterThan(before)
+  await expect(page.locator('footer')).toContainText('The Gardener')
+
+  // He falls once his flower is open; the blessing is offered for the one spell known.
+  for (let slice = 0; slice < 40 && (await state()).mode !== 'open'; slice++) await page.clock.runFor(200)
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.foes.find((foe: { kind: string }) => foe.kind === 'gardener').health = 0.5
+    Object.assign(battle.spells.witchfire, { range: 2000 })
+    battle.foes = battle.foes.filter((foe: { kind: string }) => foe.kind === 'gardener')
+  })
+  const cards = page.locator('#choices button')
+  for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  // Level-ups from the fight may come first; the blessing follows them.
+  for (let turn = 0; turn < 6 && !(await page.locator('#cards-title').innerText()).includes('blessing'); turn++) {
+    await cards.last().click()
+    for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  }
+  await expect(page.getByRole('heading', { name: 'The Gardener’s blessing' })).toBeVisible()
+  await expect(page.locator('#status')).toHaveText('THE GRAVE FALLS QUIET')
+  const blessing = cards.filter({ hasText: 'Witchfire' })
+  await expect(blessing).toContainText('Blessing')
+  await expect(blessing).toContainText('Each spark blooms')
+  await select(page, 'ru')
+  await expect(page.getByRole('heading', { name: 'Благословение Садовника' })).toBeVisible()
+  await expect(cards.filter({ hasText: 'Ведьмин огонь' })).toContainText('Каждая искра расцветает')
+  await select(page, 'en')
+  await blessing.click()
+  await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire ✦')
+  expect((await state()).trial).toBe('won')
+  await expect(hint).toBeHidden()
+
+  // The blessing is on the report, and the next run starts without it.
+  await page.evaluate(() => { (window as any).arena.battle.armor = 1 })
+  await playRun(page, false, 150_000)
+  await expect(page.locator('#title')).toHaveText('The briars prevail')
+  await expect(page.locator('#message')).toContainText('Blessed: Witchfire.')
+  await page.getByRole('button', { name: 'Play again' }).click()
+  await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire')
+  expect((await state()).trial).toBe('asleep')
+  expect(errors).toEqual([])
+})
+
 test('boars, archers, knights and moths fill the last minute and mark their attacks', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))

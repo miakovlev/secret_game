@@ -390,6 +390,28 @@ footer span {
 .choices .relic span {
   color: #cdd0c3;
 }
+.gardener-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #5f4c3a;
+  border: 2px solid #f4f1e6;
+}
+.hint {
+  margin: 0;
+  padding: 9px 16px;
+  background: #33302a;
+  border: 1px solid #4f5448;
+  border-top: 0;
+  color: #f1e3b8;
+  font-size: 0.9rem;
+}
+.choices .bless {
+  border-bottom-color: #f4f1e6;
+}
+.choices .bless span {
+  color: #cdd0c3;
+}
 .boar-dot {
   width: 11px;
   height: 11px;
