@@ -4,13 +4,14 @@ import type { BattleEvent, Foe, Phase, Shot } from './battle'
 import {
   archerVolley, boarCharge, court, difficulties, duelRule, foes, gardenerRule, heroes, heroIds, loadout, relicRule,
 } from './content'
-import type { HeroId, RelicId } from './content'
+import type { HeroId, RelicId, SpellId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture,
   gardenerTexture, heroTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
+import { glyphs, iconMarkup } from './icons'
 import { load, settle, store } from './progress'
 import { Sound } from './sound'
 import type { Cue } from './sound'
@@ -283,7 +284,7 @@ class Arena extends Phaser.Scene {
         button.setAttribute('aria-checked', String(id === this.hero))
         button.disabled = !open
         name.textContent = copy.heroes[id].name
-        spell.textContent = copy.spells[heroes[id].spell].name
+        spell.append(icon(heroes[id].spell), copy.spells[heroes[id].spell].name)
         gift.textContent = open || opens === 'start' ? copy.heroes[id].gift : copy.locks[opens]
         button.append(name, spell, gift)
         button.onclick = () => this.choose(() => { this.hero = id })
@@ -531,9 +532,10 @@ class Arena extends Phaser.Scene {
     // Fire seeds wait on the ground; firefly spirits ride their ring.
     for (const seed of b.seeds) {
       const glow = 0.5 + 0.5 * Math.sin(b.elapsed * 8 + seed.x)
-      w.fillStyle(0xff8a3c, 0.25 + 0.2 * glow)
+      // Red, so a seed is never taken for a golden ember.
+      w.fillStyle(0xe8321e, 0.3 + 0.25 * glow)
       w.fillCircle(seed.x, seed.y, 9)
-      w.fillStyle(0xffd27a, 1)
+      w.fillStyle(0xff4a30, 1)
       w.fillCircle(seed.x, seed.y, 3.5)
     }
     const lady = b.stage === 'duel' ? b.duchess : undefined
@@ -673,9 +675,9 @@ class Arena extends Phaser.Scene {
         g.strokeCircle(event.to.x, event.to.y, 5 + (1 - fade) * 8)
       } else if (event.type === 'burst') {
         const radius = event.radius * (0.4 + 0.6 * (1 - fade))
-        g.fillStyle(0xff8a3c, 0.3 * fade)
+        g.fillStyle(0xe8321e, 0.32 * fade)
         g.fillCircle(event.at.x, event.at.y, radius)
-        g.lineStyle(3, 0xffd27a, fade)
+        g.lineStyle(3, 0xff6a4a, fade)
         g.strokeCircle(event.at.x, event.at.y, radius)
       } else if (event.type === 'sting') {
         g.lineStyle(2, 0xd8f59a, fade)
@@ -805,7 +807,8 @@ class Arena extends Phaser.Scene {
           const relic = held[index]
           slot.setAttribute('role', 'listitem')
           slot.className = relic ? '' : 'empty'
-          slot.textContent = relic ? `${copy.relics[relic[0] as RelicId].name} ${relic[1]}` : '—'
+          if (relic) slot.append(icon(relic[0] as RelicId), `${copy.relics[relic[0] as RelicId].name} ${relic[1]}`)
+          else slot.textContent = '—'
           if (!relic) slot.setAttribute('aria-label', copy.emptySlot)
           return slot
         }),
@@ -816,7 +819,8 @@ class Arena extends Phaser.Scene {
           const spell = b.loadout[index]
           slot.setAttribute('role', 'listitem')
           slot.className = spell ? '' : 'empty'
-          slot.textContent = spell ? copy.spells[spell].name + (b.blessed[spell] ? ' ✦' : '') : '—'
+          if (spell) slot.append(icon(spell), copy.spells[spell].name + (b.blessed[spell] ? ' ✦' : ''))
+          else slot.textContent = '—'
           if (!spell) slot.setAttribute('aria-label', copy.emptySlot)
           return slot
         }),
@@ -894,7 +898,7 @@ class Arena extends Phaser.Scene {
           name.textContent = title
           detail.textContent = `${stat} ${shown(card.from)} → ${shown(card.to)}`
         }
-        button.append(key, group, name, detail)
+        button.append(icon(card.kind === 'relic' ? card.relic : card.spell), key, group, name, detail)
         button.onclick = () => this.pick(index)
         return button
       }),
@@ -946,6 +950,15 @@ class Arena extends Phaser.Scene {
       action.textContent = copy.retry
     }
   }
+}
+
+// The picture of a spell or relic, in its own colour.
+function icon(id: SpellId | RelicId) {
+  const picture = document.createElement('i')
+  picture.className = 'icon'
+  picture.style.color = glyphs[id].color
+  picture.innerHTML = iconMarkup(id)
+  return picture
 }
 
 function shown(value: number) {

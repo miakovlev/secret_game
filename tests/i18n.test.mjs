@@ -81,3 +81,25 @@ test('storage failures allow the game to continue', () => {
     assert.doesNotThrow(() => saveLanguage('ru'))
   })
 })
+
+// --- Icons.
+
+test('every spell and relic has its own icon', async () => {
+  const { glyphs, iconMarkup } = await import('../src/icons.ts')
+  const { spellIds, relicIds } = await import('../src/content.ts')
+  const ids = [...spellIds, ...relicIds]
+  assert.deepEqual(Object.keys(glyphs).sort(), [...ids].sort())
+  const pictures = ids.map(id => iconMarkup(id))
+  assert.equal(new Set(pictures).size, ids.length)
+  for (const [index, picture] of pictures.entries()) {
+    assert.match(picture, /^<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">.+<\/svg>$/)
+    assert.match(glyphs[ids[index]].color, /^#[0-9a-f]{6}$/)
+    // Nothing but shapes: no scripts, links or text.
+    assert.doesNotMatch(picture, /<(script|a|text|image|use|foreignObject)\b|href|NaN|undefined/)
+  }
+  // The names shown beside the icons exist in both languages.
+  for (const lang of ['en', 'ru']) {
+    for (const id of spellIds) assert.ok(messages[lang].spells[id].name)
+    for (const id of relicIds) assert.ok(messages[lang].relics[id].name)
+  }
+})
