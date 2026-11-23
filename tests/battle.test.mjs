@@ -21,11 +21,11 @@ test('new runs have full armor, an empty arena and independent state', () => {
   assert.equal(fresh.elapsed, 0)
   assert.equal(fresh.kills, 0)
   assert.equal(fresh.immunity, 0)
-  assert.deepEqual(fresh.drones, [])
+  assert.deepEqual(fresh.foes, [])
   assert.notDeepEqual(fresh.player, old.player)
 })
 
-test('diagonal and axial movement cover the same distance and turn the operator', () => {
+test('diagonal and axial movement cover the same distance and turn the warden', () => {
   for (const [dx, dy] of [[0, 1], [-1, 0], [1, 1], [-1, -1]]) {
     const b = playing()
     const start = { ...b.player }
@@ -47,12 +47,12 @@ for (const [edge, roll, axis, outside] of [
   ['left', 0, 'x', -14], ['right', .25, 'x', WIDTH + 14],
   ['top', .5, 'y', -14], ['bottom', .75, 'y', HEIGHT + 14],
 ]) {
-  test('drones enter from the ' + edge + ' and chase the player', () => {
+  test('foes enter from the ' + edge + ' and chase the player', () => {
     const b = playing(() => roll)
     b.step(0, 0, 0)
-    const drone = b.drones[0]
-    assert.equal(drone[axis], outside)
-    const distance = () => Math.hypot(drone.x - b.player.x, drone.y - b.player.y)
+    const foe = b.foes[0]
+    assert.equal(foe[axis], outside)
+    const distance = () => Math.hypot(foe.x - b.player.x, foe.y - b.player.y)
     const before = distance()
     advance(b, 20)
     assert.ok(distance() < before)
@@ -67,39 +67,39 @@ test('nearby horizontal and vertical entry points move to the opposite side', ()
     const b = playing(() => roll)
     b.player = player
     b.step(0, 0, 0)
-    assert.equal(b.drones[0][axis], expected)
+    assert.equal(b.foes[0][axis], expected)
   }
 })
 
-test('late waves spawn more drones over an equal interval', () => {
+test('late waves spawn more foes over an equal interval', () => {
   const count = start => {
     const b = playing()
     b.elapsed = start
     advance(b, 240)
-    return b.kills + b.drones.length
+    return b.kills + b.foes.length
   }
   assert.ok(count(50) > count(0))
 })
 
-test('discharge hits the nearest in-range target once and respects its cooldown', () => {
+test('witchfire hits the nearest in-range target once and respects its cooldown', () => {
   const b = playing()
-  const drone = offset => ({ x: b.player.x + offset, y: b.player.y, speed: 0 })
-  const near = drone(35), far = drone(120), outside = drone(160)
-  b.drones = [outside, far, near]
+  const foe = offset => ({ x: b.player.x + offset, y: b.player.y, speed: 0 })
+  const near = foe(35), far = foe(120), outside = foe(160)
+  b.foes = [outside, far, near]
   assert.deepEqual(b.step(0, 0, 0)?.to, { x: near.x, y: near.y })
   assert.equal(b.kills, 1)
   advance(b, 32)
-  assert.ok(b.drones.includes(far))
+  assert.ok(b.foes.includes(far))
   advance(b, 2)
   assert.equal(b.kills, 2)
   advance(b, 45)
-  assert.ok(b.drones.includes(outside))
+  assert.ok(b.foes.includes(outside))
   assert.equal(b.kills, 2)
 })
 
-test('overlapping drones share a damage cooldown and can eventually destroy armor', () => {
+test('overlapping foes share a damage cooldown and can eventually destroy armor', () => {
   const b = playing()
-  b.drones = Array.from({ length: 20 }, () => ({ ...b.player, speed: 0 }))
+  b.foes = Array.from({ length: 20 }, () => ({ ...b.player, speed: 0 }))
   advance(b, 1)
   assert.equal(b.armor, MAX_ARMOR - 1)
   advance(b, 70)

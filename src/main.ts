@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { Battle, DURATION, HEIGHT, MAX_ARMOR, WIDTH } from './battle'
 import type { Phase, Shot } from './battle'
-import { droneTexture, floorTexture, operatorTexture } from './art'
+import { briarlingTexture, floorTexture, wardenTexture } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
 import './style.css'
@@ -68,8 +68,8 @@ function timeText(seconds: number) {
 class Arena extends Phaser.Scene {
   private battle = new Battle()
   private keys = new Set<string>()
-  private operator!: Phaser.GameObjects.Image
-  private drones: Phaser.GameObjects.Image[] = []
+  private warden!: Phaser.GameObjects.Image
+  private foes: Phaser.GameObjects.Image[] = []
   private effects!: Phaser.GameObjects.Graphics
   private flash?: { shot: Shot; life: number }
   private lastPhase?: Phase
@@ -77,12 +77,12 @@ class Arena extends Phaser.Scene {
 
   create() {
     this.textures.addCanvas('floor', floorTexture())
-    this.textures.addCanvas('engineer', operatorTexture())
-    this.textures.addCanvas('drone', droneTexture())
+    this.textures.addCanvas('warden', wardenTexture())
+    this.textures.addCanvas('briarling', briarlingTexture())
     this.add.image(0, 0, 'floor').setOrigin(0)
-    this.operator = this.add.image(0, 0, 'engineer').setDepth(2)
+    this.warden = this.add.image(0, 0, 'warden').setDepth(2)
     this.effects = this.add.graphics().setDepth(3)
-    this.battle.drones = [
+    this.battle.foes = [
       { x: 756, y: 138, speed: 0 },
       { x: 815, y: 188, speed: 0 },
       { x: 713, y: 348, speed: 0 },
@@ -170,44 +170,37 @@ class Arena extends Phaser.Scene {
 
   private renderBattle() {
     const b = this.battle
-    this.operator.setPosition(b.player.x, b.player.y).setRotation(b.facing)
-    this.operator.setAlpha(
+    this.warden.setPosition(b.player.x, b.player.y).setRotation(b.facing)
+    this.warden.setAlpha(
       b.immunity > 0 && Math.floor(b.immunity * 12) % 2 ? 0.45 : 1,
     )
-    while (this.drones.length < b.drones.length) {
-      this.drones.push(this.add.image(0, 0, 'drone').setDepth(1))
+    while (this.foes.length < b.foes.length) {
+      this.foes.push(this.add.image(0, 0, 'briarling').setDepth(1))
     }
-    this.drones.forEach((image, index) => {
-      const drone = b.drones[index]
-      image.setVisible(!!drone)
-      if (drone)
+    this.foes.forEach((image, index) => {
+      const foe = b.foes[index]
+      image.setVisible(!!foe)
+      if (foe)
         image
-          .setPosition(drone.x, drone.y)
-          .setRotation(Math.atan2(b.player.y - drone.y, b.player.x - drone.x))
+          .setPosition(foe.x, foe.y)
+          .setRotation(Math.atan2(b.player.y - foe.y, b.player.x - foe.x))
     })
     const g = this.effects.clear()
     g.lineStyle(1.5, b.immunity > 0 ? 0xff9c7b : 0xa2ebc4, 0.8)
     g.strokeCircle(b.player.x, b.player.y, 20)
     if (this.flash && this.flash.life > 0) {
       const { from, to } = this.flash.shot
-      const corners = [
-        from,
-        {
-          x: from.x * 0.58 + to.x * 0.42 + 4,
-          y: from.y * 0.58 + to.y * 0.42 - 5,
-        },
-        {
-          x: from.x * 0.47 + to.x * 0.53 - 3,
-          y: from.y * 0.47 + to.y * 0.53 + 5,
-        },
-        to,
-      ]
-      g.lineStyle(2, 0xc9ffdf, this.flash.life / 0.17)
-      g.beginPath()
-      g.moveTo(from.x, from.y)
-      for (const point of corners.slice(1)) g.lineTo(point.x, point.y)
-      g.strokePath()
-      g.strokeCircle(to.x, to.y, 12 - this.flash.life * 45)
+      const fade = this.flash.life / 0.17
+      const progress = 1 - fade
+      g.fillStyle(0xe8c787, fade)
+      for (let i = 0; i < 6; i++) {
+        const t = Math.max(0, Math.min(1, progress * 1.6 - i * 0.07))
+        const x = from.x + (to.x - from.x) * t
+        const y = from.y + (to.y - from.y) * t - Math.sin(t * Math.PI) * 8
+        g.fillCircle(x, y, 3.6 - i * 0.45)
+      }
+      g.lineStyle(1.5, 0xffdb93, fade)
+      g.strokeCircle(to.x, to.y, 4 + progress * 8)
     }
     const timer = timeText(Math.ceil(DURATION - b.elapsed))
     const count = String(b.kills).padStart(2, '0')

@@ -2,8 +2,8 @@
   color-scheme: dark;
   font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   color: #eeeee3;
-  background: #171917;
-  --orange: #ff9851;
+  background: #19171c;
+  --gold: #e7bd78;
   --muted: #b0b4a8;
 }
 * {
@@ -13,7 +13,7 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(ellipse at 40% 30%, #2b2e28 0, transparent 65%), #171917;
+    radial-gradient(ellipse at 40% 30%, #34272e 0, transparent 65%), #19171c;
 }
 main {
   max-width: 1280px;
@@ -42,7 +42,7 @@ header {
 h1,
 h2 {
   font-family:
-    'Barlow Condensed', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+    'Cormorant Garamond', Baskerville, Georgia, serif;
 }
 .brand {
   font-weight: 850;
@@ -53,22 +53,8 @@ h2 {
 .emblem {
   width: 34px;
   height: 34px;
-  background: var(--orange);
-  clip-path: polygon(
-    0 76%,
-    35% 12%,
-    56% 12%,
-    22% 76%,
-    33% 76%,
-    68% 12%,
-    89% 12%,
-    55% 76%,
-    66% 76%,
-    100% 12%,
-    100% 50%,
-    80% 88%,
-    0 88%
-  );
+  background: var(--gold);
+  clip-path: polygon(0 22%, 30% 47%, 50% 0, 70% 47%, 100% 22%, 84% 75%, 16% 75%, 18% 84%, 82% 84%, 80% 95%, 20% 95%);
 }
 .status,
 .eyebrow,
@@ -155,16 +141,16 @@ h1 {
   transform: translateY(-50%);
   width: min(39%, 385px);
   padding: clamp(17px, 2.6vw, 34px);
-  background: linear-gradient(110deg, #222621 75%, #252922);
+  background: linear-gradient(110deg, #292229 75%, #352a32);
   border: 1px solid #585e50;
-  border-top: 3px solid var(--orange);
+  border-top: 3px solid var(--gold);
   box-shadow: 6px 8px 0 #10130f77;
 }
 [hidden] {
   display: none !important;
 }
 .eyebrow {
-  color: var(--orange);
+  color: var(--gold);
 }
 h2 {
   font-size: clamp(34px, 4.5vw, 65px);
@@ -184,14 +170,14 @@ button {
 }
 #action {
   margin-top: 22px;
-  background: var(--orange);
+  background: var(--gold);
   border: 0;
   color: #251c15;
   font-weight: 750;
   padding: 12px 20px;
 }
 #action:hover {
-  background: #ffb37c;
+  background: #f4d79e;
 }
 button:focus-visible {
   outline: 3px solid #f6f4cf;
@@ -254,13 +240,13 @@ footer span {
 .equipment b {
   color: #777c6f;
 }
-.operator-dot,
-.drone-dot {
+.warden-dot,
+.briarling-dot {
   width: 9px;
   height: 9px;
   background: #b9f3d4;
 }
-.drone-dot {
+.briarling-dot {
   background: #ff865e;
   transform: rotate(45deg);
 }

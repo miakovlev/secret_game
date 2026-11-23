@@ -4,7 +4,7 @@ export const HEIGHT = 490
 export const DURATION = 60
 export const MAX_ARMOR = 5
 export type Point = { x: number; y: number }
-export type Drone = Point & { speed: number }
+export type Foe = Point & { speed: number }
 export type Shot = { from: Point; to: Point }
 export type Phase = 'ready' | 'playing' | 'paused' | 'won' | 'lost'
 
@@ -12,7 +12,7 @@ export class Battle {
   phase: Phase = 'ready'
   player: Point = { x: 625, y: 244 }
   facing = 0
-  drones: Drone[] = []
+  foes: Foe[] = []
   armor = MAX_ARMOR
   kills = 0
   elapsed = 0
@@ -29,17 +29,17 @@ export class Battle {
   private spawn() {
     const edge = Math.floor(this.random() * 4)
     const pos = this.random()
-    const drone = {
+    const foe = {
       x: edge === 0 ? -14 : edge === 1 ? WIDTH + 14 : pos * WIDTH,
       y: edge === 2 ? -14 : edge === 3 ? HEIGHT + 14 : pos * HEIGHT,
       speed: 53 + this.random() * 15 + this.elapsed * 0.25,
     }
-    // Leave room to react when the engineer is patrolling an entry point.
-    if (Math.hypot(drone.x - this.player.x, drone.y - this.player.y) < 150) {
-      if (edge < 2) drone.x = WIDTH - drone.x
-      else drone.y = HEIGHT - drone.y
+    // Leave room to react when the warden is patrolling an entry point.
+    if (Math.hypot(foe.x - this.player.x, foe.y - this.player.y) < 150) {
+      if (edge < 2) foe.x = WIDTH - foe.x
+      else foe.y = HEIGHT - foe.y
     }
-    this.drones.push(drone)
+    this.foes.push(foe)
   }
 
   step(dt: number, dx: number, dy: number): Shot | undefined {
@@ -72,18 +72,18 @@ export class Battle {
     this.immunity = Math.max(0, this.immunity - dt)
     let closest = -1
     let nearest = 145
-    for (const [index, drone] of this.drones.entries()) {
-      const vx = this.player.x - drone.x
-      const vy = this.player.y - drone.y
+    for (const [index, foe] of this.foes.entries()) {
+      const vx = this.player.x - foe.x
+      const vy = this.player.y - foe.y
       const distance = Math.hypot(vx, vy)
       if (distance > 0) {
-        const travel = Math.min(distance, dt * drone.speed)
-        drone.x += (vx / distance) * travel
-        drone.y += (vy / distance) * travel
+        const travel = Math.min(distance, dt * foe.speed)
+        foe.x += (vx / distance) * travel
+        foe.y += (vy / distance) * travel
       }
       const remaining = Math.hypot(
-        this.player.x - drone.x,
-        this.player.y - drone.y,
+        this.player.x - foe.x,
+        this.player.y - foe.y,
       )
       if (remaining < 18 && this.immunity === 0) {
         this.armor--
@@ -101,10 +101,10 @@ export class Battle {
 
     this.nextShot = Math.max(0, this.nextShot - dt)
     if (closest >= 0 && this.nextShot === 0) {
-      const [drone] = this.drones.splice(closest, 1)
+      const [foe] = this.foes.splice(closest, 1)
       this.kills++
       this.nextShot = 0.55
-      return { from: { ...this.player }, to: { x: drone.x, y: drone.y } }
+      return { from: { ...this.player }, to: { x: foe.x, y: foe.y } }
     }
   }
 }
