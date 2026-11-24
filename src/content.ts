@@ -98,7 +98,7 @@ export const bossIds = ['mass', 'sentinel', 'retinue', 'guard', 'duchess'] as co
 export type BossId = (typeof bossIds)[number]
 
 export const foeKinds = [
-  'briarling', 'marked', 'boar', 'archer', 'knight', 'moth', 'mass', 'sentinel', 'retinue', 'guard', 'seal',
+  'briarling', 'marked', 'boar', 'archer', 'knight', 'moth', 'mass', 'sentinel', 'retinue', 'guard', 'portal',
   'duchess',
 ] as const
 export type FoeKind = (typeof foeKinds)[number]
@@ -138,9 +138,10 @@ export const foes: Record<FoeKind, FoeStats> = {
   sentinel: { health: 380, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
   retinue: { health: 900, healthGrowth: 0, speed: 62, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 8 },
   guard: { health: 520, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 24, ember: 5 },
-  // The seal-flower is rooted; the Duchess walks at her own pace (see duelRule). Neither leaves embers.
-  seal: { health: 140, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
-  duchess: { health: 1700, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+  // A sprouted gate of the Duchess is rooted and harmless to the touch; she walks
+  // at her own pace (see duelRule). She leaves no ember.
+  portal: { health: 90, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 0, ember: 2 },
+  duchess: { health: 6500, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
 }
 
 // The Briar Mass swallows every foe of the kinds in `eats` that it rolls over,
@@ -207,28 +208,44 @@ export const blessings = {
 }
 
 // The duel. When the last boss is due the waves stop and the Widow Duchess
-// walks into the same court through the north gate. A seal-flower blooms on
-// one of the `beds` around the chapel ruins, then on the next. While a flower
-// lives her crown of vines turns every blow aside, she walks after the hero at
-// `speed` and attacks. When the flower falls she stands still and open for
-// `window` seconds.
+// walks into the same court through the north gate. She walks after the hero
+// at `speed`, wounds by touch, and can be hurt at any time except during her
+// thorn storm.
 export const duelRule = {
-  beds: [{ x: 700, y: 430 }, { x: 1300, y: 430 }, { x: 1300, y: 710 }, { x: 700, y: 710 }],
-  window: 6,
   speed: 58,
   // Each attack comes every `every` seconds after `windup` seconds of warning.
-  // The lash strikes a sector `arc` degrees to each side of the hero, `range` long.
-  lash: { every: 3, windup: 1, arc: 26, range: 520 },
-  // A volley of `thorns` thorns, fanned `spread` degrees to each side, flying `reach` pixels.
-  volley: { every: 3.8, windup: 0.7, thorns: 7, spread: 30, speed: 300, reach: 640 },
-  // A briar patch marked under the hero: it erupts and then wounds anyone inside for `life` seconds.
-  patch: { every: 4, windup: 1.1, radius: 80, life: 5 },
-  // A pack of briarlings called in from beyond the view; from the second phase a boar or archers too.
-  summon: { every: 8, pack: 5 },
+  // A volley of `thorns` thorns aimed at the hero, `spread` degrees apart,
+  // flying `reach` pixels; each phase after the first adds `quicken` to their speed.
+  volley: { every: 3.2, windup: 0.7, thorns: 3, spread: 12, speed: 290, quicken: 55, reach: 640 },
+  // Briar patches: one is marked under the hero and, from the second phase,
+  // more beside it, `gap` pixels away: as many as the phase. Each erupts after
+  // `windup` and then wounds anyone inside for `life` seconds.
+  patch: { every: 4.6, windup: 2, radius: 78, life: 6, gap: 150 },
+  // The thorn storm: she stops, warns for `windup` seconds, then for `length`
+  // seconds turns on the spot and every `beat` seconds looses `thorns` thorns
+  // in all directions, the ring turned `twist` degrees each time. While it
+  // lasts nothing can hurt her.
+  storm: { every: 14, windup: 1.6, length: 4.2, beat: 0.42, thorns: 10, twist: 13, speed: 250, reach: 900 },
+  // Four columns of the chapel stop any thorn or arrow that comes within
+  // `radius` of them during the duel. A column falls after `hits` of them.
+  pillars: [0, 1, 2, 3].map(index => ({
+    x: Math.round(court.width / 2 + Math.cos(Math.PI / 8 + (index * Math.PI) / 2) * 172),
+    y: Math.round(court.height / 2 + Math.sin(Math.PI / 8 + (index * Math.PI) / 2) * 172),
+  })),
+  pillar: { radius: 24, hits: 9 },
+  // Sprouted gates: one opens every `every` seconds, `max` at most at once,
+  // `distance` pixels from the hero and `margin` from the walls. Every `beat`
+  // seconds a gate sends out `pack` briarlings; from the second phase every
+  // other time a boar comes too, and in the third a stone knight instead.
+  // A gate sends nothing while `crowd` foes or more are in the court.
+  portal: { every: 9, max: 3, distance: 300, margin: 70, beat: 4, pack: 2, crowd: 45 },
   // A new phase begins at each of these shares of her health; every phase
   // multiplies the time between her attacks by `tempo`.
   phases: [0.66, 0.33],
   tempo: 0.8,
+  // The longer the duel, the faster she attacks: every `every` seconds the
+  // time between attacks is multiplied by `step`, down to `floor` of itself.
+  rage: { every: 25, step: 0.93, floor: 0.6 },
 }
 
 // The boar starts pawing within `trigger` pixels, warns for `windup` seconds,

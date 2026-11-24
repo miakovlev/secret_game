@@ -64,9 +64,11 @@ export type BattleEvent =
   | { type: 'duel' }
   | { type: 'volley'; at: Point }
   | { type: 'erupt'; at: Point; radius: number }
-  | { type: 'crown'; open: boolean }
+  | { type: 'storm'; at: Point; on: boolean }
+  | { type: 'portal'; at: Point }
+  | { type: 'block'; at: Point }
+  | { type: 'crumble'; at: Point }
   | { type: 'phase'; phase: number }
-  | { type: 'lash'; at: Point; facing: number; range: number; arc: number }
   | { type: 'level'; level: number }
 // The run has two stages in the same court: the waves, then the duel.
 export type Stage = 'court' | 'duel'
@@ -138,19 +140,21 @@ export class Battle {
   kills = 0
   elapsed = 0
   immunity = 0
-  // The duel. `crownOpen` is how long the Duchess stays open to blows; `lash`
-  // counts down to her next strike, or through its warning once `warned`.
-  crownOpen = 0
-  seals = 0
   // The duel has a phase for each threshold of her health passed, from 1.
   duelPhase = 1
-  // Each of her attacks counts down to its warning, then through it.
-  lash = { timer: duelRule.lash.every, warned: false, facing: 0 }
+  // Seconds the duel has lasted: she attacks faster as it drags on.
+  duelClock = 0
+  // Her volley counts down to its warning, then through it.
   volley = { timer: duelRule.volley.every, warned: false, facing: 0 }
-  // Seconds until the next briar patch and the next summons; packs called so far.
+  // Seconds until the next briar patches and the next gate.
   patchIn = duelRule.patch.every
-  summonIn = duelRule.summon.every
-  summons = 0
+  portalIn = duelRule.portal.every
+  // The thorn storm: `timer` counts down to its warning ('warn'), through it,
+  // and then through the storm itself ('spin'); `beat` to the next ring of
+  // thorns, turned by `turn` radians.
+  storm = { stage: 'calm' as 'calm' | 'warn' | 'spin', timer: duelRule.storm.every, beat: 0, turn: 0 }
+  // The columns of the chapel and the blows each can still take.
+  pillars = duelRule.pillars.map(spot => ({ ...spot, hits: duelRule.pillar.hits }))
   // The Candle Guard: seconds until the next archer aims, and whose turn it is.
   volleyIn = 0
   volleyTurn = 0
@@ -486,44 +490,35 @@ export class Battle {
     return this.foes.find(foe => foe.kind === 'duchess')
   }
 
-  // The crown of vines guards the Duchess while a seal-flower lives.
+  // Nothing can hurt the Duchess while her thorn storm lasts.
   get shielded() {
-    return this.foes.some(foe => foe.kind === 'seal')
+    return this.storm.stage === 'spin'
   }
 
-  private bloom() {
-    const bed = duelRule.beds[this.seals++ % duelRule.beds.length]
-    this.foes.push(makeFoe('seal', bed.x, bed.y, 0, this.vigor('seal')))
+  // How much faster she attacks now: by phase, and by how long the duel has lasted.
+  get tempo() {
+    const { rage } = duelRule
+    return duelRule.tempo ** (this.duelPhase - 1) *
+      Math.max(rage.floor, rage.step ** Math.floor(this.duelClock / rage.every))
   }
 
-  // How much faster she attacks in the current phase.
-  private get tempo() {
-    return duelRule.tempo ** (this.duelPhase - 1)
-  }
-
-  private rest() {
-    const { lash, volley, patch, summon } = duelRule
-    this.lash = { timer: lash.every * this.tempo, warned: false, facing: 0 }
-    this.volley = { timer: volley.every * this.tempo, warned: false, facing: 0 }
-    this.patchIn = patch.every * this.tempo
-    this.summonIn = Math.min(this.summonIn, summon.every * this.tempo)
-  }
-
-  // The dawn bell: the waves stop, and the Duchess walks into the court
-  // through the north gate. Everything else stays as it is.
+  // The waves stop, and the Duchess walks into the court through the north
+  // gate. Everything else stays as it is.
   private beginDuel(events: BattleEvent[]) {
     this.stage = 'duel'
     this.foes.push(makeFoe('duchess', court.gate.x, court.gate.y + 70, duelRule.speed, this.vigor('duchess')))
-    this.bloom()
-    this.rest()
     events.push({ type: 'duel' })
   }
 
   private duel(dt: number, events: BattleEvent[]) {
     const lady = this.duchess!
-    const { lash, volley, patch, summon } = duelRule
+    const { volley, patch, storm, portal } = duelRule
+    this.duelClock += dt
     const near = (spot: Point, reach: number) =>
       Math.hypot(this.player.x - spot.x, this.player.y - spot.y) < reach
+    const thorn = (aim: number, speed: number, reach: number) => this.arrows.push({
+      x: lady.x, y: lady.y, vx: Math.cos(aim) * speed, vy: Math.sin(aim) * speed, life: reach / speed,
+    })
     // Briar patches erupt and linger whatever else she is doing.
     this.patches = this.patches.filter(spot => {
       if (spot.warn > 0) {
@@ -536,73 +531,108 @@ export class Battle {
       if (near(spot, patch.radius)) this.wound()
       return spot.life > 0
     })
-    if (this.crownOpen > 0) {
-      // She stands still with her lashes low while the next flower opens.
+    this.patchIn -= dt
+    if (this.patchIn <= 0) {
+      // One under the hero, and one more beside it for each phase passed.
+      const turn = this.random() * Math.PI * 2
+      for (let i = 0; i < this.duelPhase; i++) {
+        const angle = turn + (i * Math.PI * 2) / 3
+        const off = i ? patch.gap : 0
+        this.patches.push({
+          x: Math.max(0, Math.min(court.width, this.player.x + Math.cos(angle) * off)),
+          y: Math.max(0, Math.min(court.height, this.player.y + Math.sin(angle) * off)),
+          warn: patch.windup,
+          life: patch.life,
+        })
+      }
+      this.patchIn = patch.every * this.tempo
+    }
+
+    // Sprouted gates open near the hero and keep sending foes until broken.
+    const gates = this.foes.filter(foe => foe.kind === 'portal')
+    this.portalIn -= dt
+    if (this.portalIn <= 0) {
+      this.portalIn = portal.every * this.tempo
+      if (gates.length < portal.max) {
+        const angle = this.random() * Math.PI * 2
+        const gate = makeFoe(
+          'portal',
+          Math.max(portal.margin, Math.min(court.width - portal.margin, this.player.x + Math.cos(angle) * portal.distance)),
+          Math.max(portal.margin, Math.min(court.height - portal.margin, this.player.y + Math.sin(angle) * portal.distance)),
+          0,
+          this.vigor('portal'),
+        )
+        gate.timer = portal.beat
+        this.foes.push(gate)
+        events.push({ type: 'portal', at: { x: gate.x, y: gate.y } })
+      }
+    }
+    for (const gate of gates) {
+      if (gate.timer > 0 || this.foes.length >= portal.crowd) continue
+      gate.timer = portal.beat
+      gate.shots++
+      const send = (kind: FoeKind, count: number) => {
+        const stats = foes[kind]
+        for (let i = 0; i < count; i++) {
+          const angle = this.random() * Math.PI * 2
+          this.foes.push(makeFoe(
+            kind, gate.x + Math.cos(angle) * 18, gate.y + Math.sin(angle) * 18,
+            stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
+            this.vigor(kind),
+          ))
+        }
+      }
+      send('briarling', portal.pack)
+      if (this.duelPhase > 1 && gate.shots % 2 === 0) send(this.duelPhase > 2 ? 'knight' : 'boar', 1)
+      events.push({ type: 'summon', at: { x: gate.x, y: gate.y } })
+    }
+
+    // The thorn storm takes over everything else she does.
+    this.storm.timer -= dt
+    if (this.storm.stage === 'calm') {
+      if (this.storm.timer <= 0) {
+        this.storm = { stage: 'warn', timer: storm.windup, beat: 0, turn: this.random() * Math.PI * 2 }
+        // A volley already raised is dropped.
+        this.volley = { timer: volley.every * this.tempo, warned: false, facing: 0 }
+        events.push({ type: 'storm', at: { x: lady.x, y: lady.y }, on: true })
+      }
+    } else if (this.storm.stage === 'warn') {
+      if (this.storm.timer <= 0) this.storm = { ...this.storm, stage: 'spin', timer: storm.length }
+    } else {
+      this.storm.beat -= dt
+      if (this.storm.beat <= 0) {
+        for (let i = 0; i < storm.thorns; i++) {
+          thorn(this.storm.turn + (i / storm.thorns) * Math.PI * 2, storm.speed, storm.reach)
+        }
+        this.storm.turn += (storm.twist * Math.PI) / 180
+        this.storm.beat = storm.beat * this.tempo
+        events.push({ type: 'volley', at: { x: lady.x, y: lady.y } })
+      }
+      if (this.storm.timer <= 0) {
+        this.storm = { stage: 'calm', timer: storm.every * this.tempo, beat: 0, turn: 0 }
+        events.push({ type: 'storm', at: { x: lady.x, y: lady.y }, on: false })
+      }
+    }
+    if (this.storm.stage !== 'calm') {
       lady.speed = 0
-      this.crownOpen = Math.max(0, this.crownOpen - dt)
-      if (this.crownOpen > 0) return
-      this.bloom()
-      this.rest()
-      events.push({ type: 'crown', open: false })
       return
     }
     lady.speed = duelRule.speed
-    const turn = Math.atan2(this.player.y - lady.y, this.player.x - lady.x)
-
-    this.lash.timer = Math.max(0, this.lash.timer - dt)
-    if (this.lash.timer === 0) {
-      if (!this.lash.warned) {
-        this.lash = { timer: lash.windup, warned: true, facing: turn }
-      } else {
-        const aside = turn - this.lash.facing
-        const arc = (lash.arc * Math.PI) / 180
-        if (Math.abs(Math.atan2(Math.sin(aside), Math.cos(aside))) <= arc && near(lady, lash.range)) this.wound()
-        events.push({
-          type: 'lash', at: { x: lady.x, y: lady.y }, facing: this.lash.facing, range: lash.range, arc,
-        })
-        this.lash = { timer: lash.every * this.tempo, warned: false, facing: 0 }
-      }
-    }
 
     this.volley.timer = Math.max(0, this.volley.timer - dt)
     if (this.volley.timer === 0) {
       if (!this.volley.warned) {
+        const turn = Math.atan2(this.player.y - lady.y, this.player.x - lady.x)
         this.volley = { timer: volley.windup, warned: true, facing: turn }
       } else {
-        // A fan of thorns along the lines she marked.
+        // Three thorns along the lines she marked, faster in each later phase.
         for (let i = 0; i < volley.thorns; i++) {
-          const aim = this.volley.facing +
-            (((i / (volley.thorns - 1)) * 2 - 1) * volley.spread * Math.PI) / 180
-          this.arrows.push({
-            x: lady.x,
-            y: lady.y,
-            vx: Math.cos(aim) * volley.speed,
-            vy: Math.sin(aim) * volley.speed,
-            life: volley.reach / volley.speed,
-          })
+          const aim = this.volley.facing + ((i - (volley.thorns - 1) / 2) * volley.spread * Math.PI) / 180
+          thorn(aim, volley.speed + volley.quicken * (this.duelPhase - 1), volley.reach)
         }
         events.push({ type: 'volley', at: { x: lady.x, y: lady.y } })
         this.volley = { timer: volley.every * this.tempo, warned: false, facing: 0 }
       }
-    }
-
-    this.patchIn -= dt
-    if (this.patchIn <= 0) {
-      this.patches.push({ x: this.player.x, y: this.player.y, warn: patch.windup, life: patch.life })
-      this.patchIn = patch.every * this.tempo
-    }
-
-    this.summonIn -= dt
-    if (this.summonIn <= 0) {
-      this.summons++
-      this.spawn('briarling', summon.pack)
-      // From the second phase she also calls a boar or a pair of archers, in turn.
-      if (this.duelPhase > 1) {
-        if (this.summons % 2) this.spawn('boar', 1)
-        else this.spawn('archer', 2)
-      }
-      this.summonIn = summon.every * this.tempo
-      events.push({ type: 'summon', at: { x: lady.x, y: lady.y } })
     }
   }
 
@@ -784,6 +814,8 @@ export class Battle {
     // Nor does the Sleepless Warder while it lies between lives.
     // An archer of the Candle Guard whose candle is out takes no blow either.
     if (!this.foes.includes(foe) || foe.mode === 'down' || (foe.kind === 'guard' && foe !== this.lit)) return
+    // Nor does the Duchess in her thorn storm.
+    if (foe.kind === 'duchess' && this.shielded) return
     foe.health -= damage
     if (foe.kind === 'sentinel' && foe.health <= 0 && foe.falls < warderRule.lives - 1) {
       // However hard the blow, it costs the Warder one life.
@@ -812,11 +844,6 @@ export class Battle {
       this.felled++
       events.push({ type: 'felled', boss: 'duchess', at: fallen })
       this.phase = 'won'
-    } else if (foe.kind === 'seal') {
-      // The crown opens and any lash already raised is dropped.
-      this.crownOpen = duelRule.window
-      this.rest()
-      events.push({ type: 'crown', open: true })
     } else {
       const shard = foe.kind === 'retinue'
       this.embers.push({ ...fallen, value: shard ? retinueRule.tiers[foe.tier].ember : foes[foe.kind].ember })
@@ -1078,6 +1105,15 @@ export class Battle {
       arrow.x += arrow.vx * dt
       arrow.y += arrow.vy * dt
       arrow.life -= dt
+      // In the duel a standing column of the chapel stops whatever flies into it.
+      const pillar = this.stage === 'duel' && this.pillars.find(
+        spot => spot.hits > 0 && Math.hypot(arrow.x - spot.x, arrow.y - spot.y) < duelRule.pillar.radius,
+      )
+      if (pillar) {
+        pillar.hits--
+        events.push({ type: pillar.hits ? 'block' : 'crumble', at: { x: pillar.x, y: pillar.y } })
+        return false
+      }
       const struck = Math.hypot(arrow.x - this.player.x, arrow.y - this.player.y) < archerVolley.hit
       if (struck) this.wound()
       return !struck && arrow.life > 0

@@ -102,7 +102,7 @@ const en = {
   },
   ready: {
     label: 'THE FIRST VIGIL', title: 'Until first light',
-    message: 'Hold the court for nine minutes. Then the Duchess comes: break her seal-flower and strike her while her crown is open.',
+    message: 'A boss comes every three minutes. Fell four of them, then face the Duchess: dodge her thorns and break her gates.',
     action: 'Start run',
   },
   paused: {
@@ -112,8 +112,8 @@ const en = {
   won: { label: 'THE BELLS RING', title: 'The crown is lifted' },
   duel: {
     statuses: ['THE DUCHESS COMES', 'THE DUCHESS RAGES', 'THE CROWN CRACKS'],
-    seal: 'Her crown is closed. Break the seal-flower: the arrow points to it.',
-    open: 'Her crown is open. Strike the Duchess!',
+    fight: 'Strike the Duchess, step off the marked ground and break her gates before the court fills.',
+    storm: 'Thorn storm! Stand behind a column or slip between the thorns. Nothing hurts her until it ends.',
   },
   phaseLine: (phase: number) => `Duel phase reached: ${phase} of 3.`,
   fell: { court: 'The watch ended before dawn.', duel: 'The watch ended in the duel with the Duchess.' },
@@ -255,7 +255,7 @@ const ru: typeof en = {
   },
   ready: {
     label: 'ПЕРВЫЙ ДОЗОР', title: 'До первых лучей',
-    message: 'Продержись девять минут. Потом придёт Княгиня: разбей её цветок-печать и бей, пока венец раскрыт.',
+    message: 'Каждые три минуты приходит босс. Победи четверых, затем саму Княгиню: уходи от её шипов и ломай врата.',
     action: 'Начать забег',
   },
   paused: {
@@ -265,8 +265,8 @@ const ru: typeof en = {
   won: { label: 'ЗВОН КОЛОКОЛОВ', title: 'Венец снят' },
   duel: {
     statuses: ['КНЯГИНЯ ПРИШЛА', 'КНЯГИНЯ В ЯРОСТИ', 'ВЕНЕЦ ТРЕЩИТ'],
-    seal: 'Её венец закрыт. Разбей цветок-печать: стрелка показывает, где он.',
-    open: 'Её венец раскрыт. Бей Княгиню!',
+    fight: 'Бей Княгиню, уходи с отмеченной земли и ломай её врата, пока двор не заполнился.',
+    storm: 'Терновая буря! Встань за колонну или пройди между шипами. Пока она не кончится, Княгиню не ранить.',
   },
   phaseLine: phase => `Достигнута фаза дуэли: ${phase} из 3.`,
   fell: { court: 'Дозор окончен до рассвета.', duel: 'Дозор окончен в дуэли с Княгиней.' },

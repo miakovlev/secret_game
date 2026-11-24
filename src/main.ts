@@ -7,7 +7,7 @@ import {
 import type { BossId, HeroId, RelicId, SpellId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture,
-  guardTexture, heroTexture, massTexture, retinueTexture, warderTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
+  guardTexture, heroTexture, massTexture, retinueTexture, warderTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, portalTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -143,7 +143,7 @@ class Arena extends Phaser.Scene {
   create() {
     this.textures.addCanvas('floor', floorTexture())
     this.textures.addCanvas('duchess', duchessTexture())
-    this.textures.addCanvas('seal', sealTexture())
+    this.textures.addCanvas('portal', portalTexture())
     for (const id of heroIds) this.textures.addCanvas(id, heroTexture(id))
     this.textures.addCanvas('briarling', briarlingTexture())
     this.textures.addCanvas('ember', emberTexture())
@@ -374,12 +374,12 @@ class Arena extends Phaser.Scene {
         if (event.type === 'shot') this.flash = { shot: event, life: 0.17 }
         const cue = ({
           shot: 'shot', kill: 'kill', pickup: 'pickup', level: 'level', heal: 'heal', open: 'chest',
-          slash: 'slash', toll: 'toll', burst: 'burst', arrow: 'arrow', lash: 'lash', duel: 'bell', volley: 'arrow', erupt: 'burst',
-          boss: 'bell', felled: 'chest', summon: 'rise', absorb: 'rise', fall: 'crown', rise: 'rise', split: 'burst', crown: 'crown', phase: 'lash',
+          slash: 'slash', toll: 'toll', burst: 'burst', arrow: 'arrow', duel: 'bell', volley: 'arrow', erupt: 'burst',
+          boss: 'bell', felled: 'chest', summon: 'rise', absorb: 'rise', fall: 'crown', rise: 'rise', split: 'burst', storm: 'lash', portal: 'rise', block: 'kill', crumble: 'burst', phase: 'lash',
         } as Partial<Record<BattleEvent['type'], Cue>>)[event.type]
         if (cue) this.sfx.play(cue)
         const span = {
-          kill: 0.3, level: 0.6, pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, erupt: 0.35, phase: 0.9, bloom: 0.22, summon: 0.5, felled: 0.8, absorb: 0.35, fall: 0.6, rise: 0.7, split: 0.45, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          kill: 0.3, level: 0.6, pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, erupt: 0.35, phase: 0.9, bloom: 0.22, summon: 0.5, felled: 0.8, block: 0.25, crumble: 0.6, portal: 0.6, absorb: 0.35, fall: 0.6, rise: 0.7, split: 0.45, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
@@ -388,10 +388,10 @@ class Arena extends Phaser.Scene {
     }
     this.pictures = this.pictures.filter(effect => effect.life > 0)
     const b = this.battle
-    // A newly marked lane, aimed line or lash sector gets a warning tone.
+    // A newly marked lane, aimed line, patch or storm gets a warning tone.
     const marked =
       b.foes.filter(foe => foe.mode === 'windup' || foe.mode === 'aim').length +
-      Number(b.stage === 'duel' && b.lash.warned) + Number(b.stage === 'duel' && b.volley.warned) +
+      Number(b.stage === 'duel' && b.volley.warned) + Number(b.storm.stage === 'warn') +
       b.patches.filter(spot => spot.warn > 0).length
     if (marked > this.marked) this.sfx.play('warn')
     this.marked = marked
@@ -447,7 +447,7 @@ class Arena extends Phaser.Scene {
         w.fillStyle(0xffffff, 0.55 * (1 - since / 0.09))
         w.fillCircle(foe.x, foe.y, b.reach(foe) + 4)
       }
-      const rooted = foe.kind === 'seal' || foe.kind === 'duchess'
+      const rooted = foe.kind === 'portal' || foe.kind === 'duchess'
       const locked = foe.mode !== 'chase' && foe.mode !== 'rest'
       const pawing = foe.mode === 'windup' ? Math.sin(b.elapsed * 70) * 2 : 0
       image
@@ -462,16 +462,16 @@ class Arena extends Phaser.Scene {
               ? Math.atan2(foe.dir.y, foe.dir.x)
               : Math.atan2(b.player.y - foe.y, b.player.x - foe.x),
         )
-        .setScale(b.reach(foe) / foes[foe.kind].reach)
+        .setScale(foes[foe.kind].reach ? b.reach(foe) / foes[foe.kind].reach : 1)
         .setAlpha(foe.mode === 'down' ? 0.35 : foe.kind === 'guard' && foe !== b.lit ? 0.6 : 1)
       if (rooted) {
-        // A health bar under each rooted thing; the seal is tied to the crown.
-        const span = foe.kind === 'seal' ? 44 : 96
+        // A health bar under the Duchess and under each of her gates.
+        const span = foe.kind === 'portal' ? 44 : 96
         const left = foe.x - span / 2
-        const below = foe.y + (foe.kind === 'seal' ? 30 : 62)
+        const below = foe.y + (foe.kind === 'portal' ? 38 : 62)
         w.fillStyle(0x17131c, 0.8)
         w.fillRect(left - 1, below - 1, span + 2, 7)
-        w.fillStyle(foe.kind === 'seal' ? 0xd877e6 : 0xe7bd78, 1)
+        w.fillStyle(foe.kind === 'portal' ? 0xd877e6 : 0xe7bd78, 1)
         w.fillRect(left, below, span * Math.max(0, Math.min(1, foe.health / foe.full)), 5)
       }
       if (foe.mode === 'windup') {
@@ -514,10 +514,10 @@ class Arena extends Phaser.Scene {
     })
     const pulse = 0.5 + 0.5 * Math.sin(b.elapsed * 6)
     // An arrow at the edge of the view points to what matters now: the boss in
-    // the court, and in the duel the seal-flower or the open Duchess.
+    // the court, and in the duel the Duchess.
     const lord = b.stage === 'court' ? b.boss : undefined
     const beacon = b.stage === 'duel'
-      ? b.foes.find(foe => foe.kind === 'seal') ?? b.duchess
+      ? b.duchess
       : lord
     if (beacon) {
       const view = b.camera()
@@ -554,34 +554,31 @@ class Arena extends Phaser.Scene {
     const lady = b.stage === 'duel' ? b.duchess : undefined
     if (lady) {
       const pulse = 0.5 + 0.5 * Math.sin(b.elapsed * 9)
-      if (b.shielded) {
-        for (const foe of b.foes) {
-          if (foe.kind !== 'seal') continue
-          w.lineStyle(2, 0xd877e6, 0.25 + 0.2 * pulse)
-          w.lineBetween(foe.x, foe.y, lady.x, lady.y)
+      const { storm } = duelRule
+      if (b.storm.stage === 'warn') {
+        // The storm is coming: a ring closing on her, and the first lines of thorns.
+        const progress = 1 - b.storm.timer / storm.windup
+        w.lineStyle(3, 0xff5a7d, 0.5 + 0.4 * progress)
+        w.strokeCircle(lady.x, lady.y, 60 + 180 * (1 - progress))
+        w.lineStyle(2, 0xffe08a, 0.15 + 0.4 * progress)
+        for (let i = 0; i < storm.thorns; i++) {
+          const aim = b.storm.turn + (i / storm.thorns) * Math.PI * 2
+          w.lineBetween(lady.x, lady.y, lady.x + Math.cos(aim) * 420, lady.y + Math.sin(aim) * 420)
         }
-        // The closed crown: a ring of vines around the Duchess.
+      } else if (b.shielded) {
+        // The storm itself: a whirl of vines no spell gets through.
+        w.fillStyle(0x4b6b4a, 0.3)
+        w.fillCircle(lady.x, lady.y, 58)
         w.lineStyle(6, 0x4b6b4a, 0.95)
-        w.strokeCircle(lady.x, lady.y, 50)
-        w.lineStyle(2, 0x9fc38a, 0.9)
-        w.strokeCircle(lady.x, lady.y, 55)
+        w.strokeCircle(lady.x, lady.y, 54)
+        w.lineStyle(3, 0x9fc38a, 0.9)
+        for (let i = 0; i < 4; i++) {
+          const from = b.elapsed * 7 + (i * Math.PI) / 2
+          w.beginPath().arc(lady.x, lady.y, 62, from, from + 0.9).strokePath()
+        }
       } else {
-        w.lineStyle(3, 0xffe08a, 0.35 + 0.5 * pulse)
-        w.strokeCircle(lady.x, lady.y, 50 + 6 * pulse)
-      }
-      if (b.lash.warned) {
-        // The marked sector: an outline from the first moment, filling as the lash nears.
-        const progress = 1 - b.lash.timer / duelRule.lash.windup
-        const arc = (duelRule.lash.arc * Math.PI) / 180
-        const { range } = duelRule.lash
-        const from = b.lash.facing - arc, to = b.lash.facing + arc
-        w.fillStyle(0xb02a55, 0.1 + 0.32 * progress)
-        w.slice(lady.x, lady.y, range, from, to).fillPath()
-        w.fillStyle(0xff5a7d, 0.22)
-        w.slice(lady.x, lady.y, range * progress, from, to).fillPath()
-        w.lineStyle(2, 0xff9fbd, 0.55 + 0.4 * progress)
-        w.lineBetween(lady.x, lady.y, lady.x + Math.cos(from) * range, lady.y + Math.sin(from) * range)
-        w.lineBetween(lady.x, lady.y, lady.x + Math.cos(to) * range, lady.y + Math.sin(to) * range)
+        w.lineStyle(3, 0xffe08a, 0.3 + 0.3 * pulse)
+        w.strokeCircle(lady.x, lady.y, 50 + 4 * pulse)
       }
       if (b.volley.warned) {
         // The thorns will fly along these lines.
@@ -589,8 +586,38 @@ class Arena extends Phaser.Scene {
         const progress = 1 - b.volley.timer / windup
         w.lineStyle(2 + 2 * progress, 0xffe08a, 0.2 + 0.5 * progress)
         for (let i = 0; i < thorns; i++) {
-          const aim = b.volley.facing + (((i / (thorns - 1)) * 2 - 1) * spread * Math.PI) / 180
+          const aim = b.volley.facing + ((i - (thorns - 1) / 2) * spread * Math.PI) / 180
           w.lineBetween(lady.x, lady.y, lady.x + Math.cos(aim) * reach, lady.y + Math.sin(aim) * reach)
+        }
+      }
+    }
+    // The four columns of the chapel: cover in the duel, rubble once they have taken too much.
+    for (const pillar of b.pillars) {
+      if (pillar.hits > 0) {
+        const worn = 1 - pillar.hits / duelRule.pillar.hits
+        w.fillStyle(0x17131c, 0.6)
+        w.fillCircle(pillar.x + 3, pillar.y + 4, duelRule.pillar.radius)
+        w.fillStyle(0x8f858d, 1)
+        w.fillCircle(pillar.x, pillar.y, duelRule.pillar.radius - 2)
+        w.fillStyle(0xb5aab2, 1)
+        w.fillCircle(pillar.x, pillar.y, duelRule.pillar.radius - 9)
+        // Cracks spread as it takes thorns.
+        w.lineStyle(2, 0x2a2530, 0.9)
+        for (let i = 0; i < Math.ceil(worn * 6); i++) {
+          const turn = i * 1.9 + pillar.x
+          w.lineBetween(pillar.x, pillar.y, pillar.x + Math.cos(turn) * 20, pillar.y + Math.sin(turn) * 20)
+        }
+        if (b.stage === 'duel') {
+          w.lineStyle(2, 0xffe08a, 0.35)
+          w.strokeCircle(pillar.x, pillar.y, duelRule.pillar.radius + 3)
+        }
+      } else {
+        w.fillStyle(0x2a2530, 0.9)
+        w.fillCircle(pillar.x, pillar.y, duelRule.pillar.radius)
+        w.fillStyle(0x5a5058, 1)
+        for (let i = 0; i < 6; i++) {
+          const turn = i * 1.05 + pillar.y
+          w.fillCircle(pillar.x + Math.cos(turn) * 13, pillar.y + Math.sin(turn) * 13, 5)
         }
       }
     }
@@ -741,10 +768,13 @@ class Arena extends Phaser.Scene {
         g.slice(at.x, at.y, range, facing - arc, facing + arc).fillPath()
         g.lineStyle(2.5, 0xf2f5ff, fade)
         g.beginPath().arc(at.x, at.y, range, facing - arc, facing + arc).strokePath()
-      } else if (event.type === 'lash') {
-        const { at, facing, range, arc } = event
-        g.fillStyle(0xff9fbd, 0.55 * fade)
-        g.slice(at.x, at.y, range, facing - arc, facing + arc).fillPath()
+      } else if (event.type === 'block' || event.type === 'crumble') {
+        // Stone dust where a column took a thorn, more when it falls.
+        g.fillStyle(0xb5aab2, 0.5 * fade)
+        g.fillCircle(event.at.x, event.at.y, (event.type === 'crumble' ? 60 : 30) * (1.2 - fade))
+      } else if (event.type === 'portal') {
+        g.lineStyle(4, 0xd877e6, fade)
+        g.strokeCircle(event.at.x, event.at.y, 80 - (1 - fade) * 50)
       } else if (event.type === 'toll') {
         const radius = event.radius * (0.35 + 0.65 * (1 - fade))
         g.fillStyle(0xe7bd78, 0.12 * fade)
@@ -812,7 +842,7 @@ class Arena extends Phaser.Scene {
         : lord.kind === 'sentinel' ? copy.warderHint
           : lord.kind === 'retinue' ? copy.retinueHint : copy.guardHint
       : ''
-    const duel = b.phase === 'playing' && lady ? (b.shielded ? copy.duel.seal : copy.duel.open) : ''
+    const duel = b.phase === 'playing' && lady ? (b.storm.stage === 'calm' ? copy.duel.fight : copy.duel.storm) : ''
     const tip = lesson ? copy.tips[lesson] : trial || duel
     if (hint.textContent !== tip) hint.textContent = tip
     hint.hidden = !tip
@@ -820,7 +850,7 @@ class Arena extends Phaser.Scene {
     // boss's health instead.
     const next = b.nextBoss
     const timer = lady
-      ? Math.ceil((100 * Math.max(0, lady.health)) / foes.duchess.health) + '%'
+      ? Math.ceil((100 * Math.max(0, lady.health)) / lady.full) + '%'
       : lord
         ? Math.ceil(100 * b.bossLeft) + '%'
         : next && b.stage === 'court'

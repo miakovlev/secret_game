@@ -389,20 +389,24 @@ export function duchessTexture() {
   })
 }
 
-export function sealTexture() {
-  return texture(60, 60, p => {
-    const glow = p.createRadialGradient(30, 30, 2, 30, 30, 30)
-    glow.addColorStop(0, '#e58af599')
+// A sprouted gate of the Duchess: a ring of briars around a violet rift.
+export function portalTexture() {
+  return texture(76, 76, p => {
+    const glow = p.createRadialGradient(38, 38, 2, 38, 38, 38)
+    glow.addColorStop(0, '#e58af5aa')
     glow.addColorStop(1, '#e58af500')
     p.fillStyle = glow
-    p.fillRect(0, 0, 60, 60)
-    p.translate(30, 30)
-    for (let i = 0; i < 6; i++) {
-      p.rotate(Math.PI / 3)
-      polygon(p, [[0,-3],[-8,-13],[0,-23],[8,-13]], i % 2 ? '#b84fc8' : '#d877e6')
+    p.fillRect(0, 0, 76, 76)
+    p.translate(38, 38)
+    circle(p, 0, 0, 24, '#2a1630')
+    circle(p, 0, 0, 17, '#7a2f8f')
+    circle(p, 0, 0, 10, '#d877e6')
+    circle(p, 0, 0, 4, '#ffe7ff')
+    for (let i = 0; i < 10; i++) {
+      p.rotate(Math.PI / 5)
+      polygon(p, [[-5,-21],[0,-33],[5,-21]], i % 2 ? '#4b6b4a' : '#33472f')
+      polygon(p, [[-3,-19],[3,-19],[5,-25],[-5,-25]], '#2d3a2a')
     }
-    circle(p, 0, 0, 7, '#ffe7a5')
-    circle(p, 0, 0, 3, '#c9a05a')
   })
 }
 

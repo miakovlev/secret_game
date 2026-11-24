@@ -719,7 +719,7 @@ test('winning opens the next difficulty and a starting relic, and the save survi
   await page.clock.runFor(1500)
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    Object.assign(battle.spells.witchfire, { range: 4000, damage: 400 })
+    Object.assign(battle.spells.witchfire, { range: 4000, damage: 4000 })
     battle.immunity = 60
   })
   for (let slice = 0; slice < 200 && await page.locator('#panel').isHidden(); slice++) {
@@ -973,48 +973,61 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the duel'] a
       await expect(page.locator('#clock')).toHaveText('100%')
       await expect(page.getByRole('img', { name: `Armor ${won ? 3 : 1} of 5` })).toBeVisible()
       await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire')
-      await expect(page.locator('#hint')).toHaveText(/Her crown is closed\. Break the seal-flower/)
+      await expect(page.locator('#hint')).toHaveText(/Strike the Duchess, step off the marked ground and break her gates/)
       const duelNow = () => page.evaluate(() => {
         const { battle } = (window as any).arena
         const kinds = battle.foes.map((foe: { kind: string }) => foe.kind)
         return {
-          stage: battle.stage, shielded: battle.shielded,
-          duchess: kinds.includes('duchess'), seal: kinds.includes('seal'),
+          stage: battle.stage, shielded: battle.shielded, storm: battle.storm.stage,
+          duchess: kinds.includes('duchess'), gates: kinds.filter((kind: string) => kind === 'portal').length,
+          columns: battle.pillars.filter((spot: { hits: number }) => spot.hits > 0).length,
           inCourt: battle.player.x > 22 && battle.player.y > 22,
         }
       })
-      expect(await duelNow()).toEqual({ stage: 'duel', shielded: true, duchess: true, seal: true, inCourt: true })
+      expect(await duelNow()).toEqual({ stage: 'duel', shielded: false, storm: 'calm', duchess: true, gates: 0, columns: 4, inCourt: true })
       await select(page, 'ru')
       await expect(page.getByRole('heading', { name: 'У часовни' })).toBeVisible()
       await expect(page.locator('#clock-label')).toHaveText('КНЯГИНЯ')
       await expect(page.locator('#status')).toHaveText('КНЯГИНЯ ПРИШЛА')
-      await expect(page.locator('#hint')).toHaveText(/Её венец закрыт/)
+      await expect(page.locator('#hint')).toHaveText(/Бей Княгиню, уходи с отмеченной земли и ломай её врата/)
       await select(page, 'en')
 
       if (won) {
-        // The crown holds while the seal-flower lives, however hard the witchfire burns.
-        const seal = (health: number) => page.evaluate((value: number) => {
+        // Armor to spare: this part is about her mechanics, not about dodging.
+        const set = (change: string) => page.evaluate((code: string) => {
           const { battle } = (window as any).arena
-          Object.assign(battle.spells.witchfire, { range: 4000, damage: 400 })
-          // Armor to spare: this part is about the crown, not about dodging.
           battle.armor = 5
           battle.immunity = 60
-          battle.foes.find((foe: { kind: string }) => foe.kind === 'seal').health = value
-        }, health)
-        await seal(1e9)
-        await page.clock.runFor(1500)
+          new Function('battle', code)(battle)
+        }, change)
+        // A sprouted gate opens near the warden.
+        await set('battle.portalIn = 0.01; battle.spells.witchfire.range = 0')
+        await page.clock.runFor(200)
+        expect((await duelNow()).gates).toBe(1)
+        // The thorn storm: a warning, then she is beyond every spell until it ends.
+        await set('battle.storm.timer = 0.01')
+        await page.clock.runFor(300)
+        expect((await duelNow()).storm).toBe('warn')
+        await expect(page.locator('#hint')).toHaveText(/Thorn storm! Stand behind a column or slip between the thorns/)
+        await select(page, 'ru')
+        await expect(page.locator('#hint')).toHaveText(/Терновая буря! Встань за колонну/)
+        await select(page, 'en')
+        await page.clock.runFor(1800)
+        expect(await duelNow()).toMatchObject({ storm: 'spin', shielded: true })
+        await set('battle.foes = [battle.duchess]; Object.assign(battle.spells.witchfire, { range: 4000, damage: 2400 })')
+        await page.clock.runFor(1200)
         await expect(page.locator('#clock')).toHaveText('100%')
-        await seal(1)
-        // Once the flower falls the crown opens, the hint changes, and she can be struck down.
-        let open = false
+        await set('battle.storm.timer = 0.01')
+        // Once the storm is over she can be struck down.
+        let calm = false
         for (let slice = 0; slice < 120 && await page.locator('#panel').isHidden(); slice++) {
           await page.clock.runFor(100)
           if (await page.locator('#cards').isVisible()) await page.keyboard.press('Digit1')
-          open ||= (await page.locator('#hint').innerText()).startsWith('Her crown is open')
+          calm ||= (await page.locator('#hint').innerText()).startsWith('Strike the Duchess')
         }
-        expect(open).toBe(true)
+        expect(calm).toBe(true)
       } else {
-        // A warden who stands still is struck down by her lash, thorns and briars.
+        // A warden who stands still is struck down by her thorns and briars.
         await playRun(page, false, 15_000)
       }
     } else {
