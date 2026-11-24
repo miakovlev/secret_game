@@ -33,7 +33,36 @@ export type Foe = Point & {
   // For an archer of the Candle Guard, its place in the ring.
   tier: number
 }
-export type Arrow = Point & { vx: number; vy: number; life: number }
+// What can take a pip of armor: the touch of a foe, an archer's arrow, a bolt
+// of the Candle Guard, a thorn of the Duchess or one of her briar patches.
+export type WoundSource = FoeKind | 'arrow' | 'bolt' | 'thorn' | 'patch'
+export type Arrow = Point & { vx: number; vy: number; life: number; by: 'arrow' | 'bolt' | 'thorn' }
+// The numbers of one run, kept for the result screen.
+export type Tally = {
+  // Health taken from foes by each spell (never more than a foe had left),
+  // the foes each spell banished, and the second of the run it was learned.
+  damage: Record<SpellId, number>
+  kills: Record<SpellId, number>
+  learned: Partial<Record<SpellId, number>>
+  // The strongest single blow, and the share of all damage that went into bosses.
+  hardest: number
+  bossDamage: number
+  // Pips of armor lost, by what took them.
+  wounds: Partial<Record<WoundSource, number>>
+  // Cards taken: level-ups, relics and blessings alike.
+  cards: number
+  // Seconds each boss has spent in the court, and whether it fell.
+  bosses: Partial<Record<BossId, { time: number; felled: boolean }>>
+  // Foes the Briar Mass swallowed, times the Warder fell and rose, pieces of
+  // the Stone Retinue broken, archers of the Candle Guard banished, gates of
+  // the Duchess broken and columns of the chapel her thorns brought down.
+  eaten: number
+  falls: number
+  shards: number
+  archers: number
+  portals: number
+  pillars: number
+}
 export type Seed = Point & { life: number }
 export type Ember = Point & { value: number }
 export type Shot = { from: Point; to: Point }
@@ -138,6 +167,22 @@ export class Battle {
   sparks = 0
   armor: number
   kills = 0
+  tally: Tally = {
+    damage: { witchfire: 0, moonblade: 0, toll: 0, seeds: 0, fireflies: 0 },
+    kills: { witchfire: 0, moonblade: 0, toll: 0, seeds: 0, fireflies: 0 },
+    learned: {},
+    hardest: 0,
+    bossDamage: 0,
+    wounds: {},
+    cards: 0,
+    bosses: {},
+    eaten: 0,
+    falls: 0,
+    shards: 0,
+    archers: 0,
+    portals: 0,
+    pillars: 0,
+  }
   elapsed = 0
   immunity = 0
   // The duel has a phase for each threshold of her health passed, from 1.
@@ -179,6 +224,7 @@ export class Battle {
     const first = heroes[hero].spell
     this.loadout = [first]
     this.spells = { [first]: { ...spells[first] } }
+    this.tally.learned[first] = 0
     // A hero who has won before may set out with their own relic.
     if (variant) this.relics[heroes[hero].variant] = 1
     this.armor = this.maxArmor
@@ -231,9 +277,11 @@ export class Battle {
   }
 
   // Thorns, tusks and arrows all take one pip, with a moment of mercy after.
-  private wound(pips = 1) {
+  private wound(by: WoundSource, pips = 1) {
     if (this.immunity > 0) return
-    this.armor = Math.max(0, this.armor - pips)
+    const lost = Math.min(this.armor, pips)
+    this.armor -= lost
+    this.tally.wounds[by] = (this.tally.wounds[by] ?? 0) + lost
     this.immunity = 1.25
     if (this.armor === 0) this.phase = 'lost'
   }
@@ -284,6 +332,7 @@ export class Battle {
         vx: foe.dir.x * archerVolley.arrowSpeed,
         vy: foe.dir.y * archerVolley.arrowSpeed,
         life: archerVolley.arrowReach / archerVolley.arrowSpeed,
+        by: 'arrow',
       })
       events.push({ type: 'arrow', at: { x: foe.x, y: foe.y } })
       foe.shots--
@@ -463,6 +512,7 @@ export class Battle {
   choose(index: number) {
     const card = this.offer[index]
     if (this.phase !== 'choosing' || !card) return
+    this.tally.cards++
     if (card.kind === 'relic') {
       this.relics[card.relic] = card.level
       // A new pip of the pilgrim's cloak arrives whole.
@@ -475,6 +525,7 @@ export class Battle {
       if (card.kind === 'learn') {
         this.loadout.push(card.spell)
         this.spells[card.spell] = { ...spells[card.spell] }
+        this.tally.learned[card.spell] = this.elapsed
       } else {
         this.spells[card.spell] = upgraded(this.spells[card.spell]!, card.id)
       }
@@ -517,7 +568,7 @@ export class Battle {
     const near = (spot: Point, reach: number) =>
       Math.hypot(this.player.x - spot.x, this.player.y - spot.y) < reach
     const thorn = (aim: number, speed: number, reach: number) => this.arrows.push({
-      x: lady.x, y: lady.y, vx: Math.cos(aim) * speed, vy: Math.sin(aim) * speed, life: reach / speed,
+      x: lady.x, y: lady.y, vx: Math.cos(aim) * speed, vy: Math.sin(aim) * speed, life: reach / speed, by: 'thorn',
     })
     // Briar patches erupt and linger whatever else she is doing.
     this.patches = this.patches.filter(spot => {
@@ -528,7 +579,7 @@ export class Battle {
       } else {
         spot.life -= dt
       }
-      if (near(spot, patch.radius)) this.wound()
+      if (near(spot, patch.radius)) this.wound('patch')
       return spot.life > 0
     })
     this.patchIn -= dt
@@ -712,6 +763,7 @@ export class Battle {
     if (!meal) return
     this.foes.splice(this.foes.indexOf(meal), 1)
     mass.grown++
+    this.tally.eaten++
     mass.health += massRule.health
     mass.full += massRule.health
     mass.speed -= massRule.slow
@@ -758,6 +810,7 @@ export class Battle {
         vx: archer.dir.x * guardRule.boltSpeed,
         vy: archer.dir.y * guardRule.boltSpeed,
         life: guardRule.boltReach / guardRule.boltSpeed,
+        by: 'bolt',
       })
       events.push({ type: 'arrow', at: { x: archer.x, y: archer.y } })
     }
@@ -808,7 +861,12 @@ export class Battle {
     else this.spawn(boss, 1)
   }
 
-  private strike(foe: Foe, damage: number, events: BattleEvent[]) {
+  // The tally of the fight with a boss, begun when it is first needed.
+  private fight(boss: BossId) {
+    return (this.tally.bosses[boss] ??= { time: 0, felled: false })
+  }
+
+  private strike(foe: Foe, damage: number, events: BattleEvent[], by: SpellId) {
     // One cast can name the same foe twice (a spark blooms on it, then leaps
     // to it); a foe already felled takes no second blow.
     // Nor does the Sleepless Warder while it lies between lives.
@@ -816,10 +874,15 @@ export class Battle {
     if (!this.foes.includes(foe) || foe.mode === 'down' || (foe.kind === 'guard' && foe !== this.lit)) return
     // Nor does the Duchess in her thorn storm.
     if (foe.kind === 'duchess' && this.shielded) return
+    const dealt = Math.min(damage, foe.health)
+    this.tally.damage[by] += dealt
+    if (this.isBoss(foe)) this.tally.bossDamage += dealt
+    this.tally.hardest = Math.max(this.tally.hardest, damage)
     foe.health -= damage
     if (foe.kind === 'sentinel' && foe.health <= 0 && foe.falls < warderRule.lives - 1) {
       // However hard the blow, it costs the Warder one life.
       foe.falls++
+      this.tally.falls++
       foe.health = 0
       foe.mode = 'down'
       foe.timer = warderRule.rest
@@ -839,9 +902,14 @@ export class Battle {
     const fallen = { x: foe.x, y: foe.y }
     this.foes.splice(this.foes.indexOf(foe), 1)
     this.kills++
+    this.tally.kills[by]++
+    if (foe.kind === 'retinue') this.tally.shards++
+    if (foe.kind === 'guard') this.tally.archers++
+    if (foe.kind === 'portal') this.tally.portals++
     events.push({ type: 'kill', at: fallen })
     if (foe.kind === 'duchess') {
       this.felled++
+      this.fight('duchess').felled = true
       events.push({ type: 'felled', boss: 'duchess', at: fallen })
       this.phase = 'won'
     } else {
@@ -856,6 +924,7 @@ export class Battle {
         // A felled boss blesses one learned spell; with every learned spell
         // already blessed it leaves a reliquary instead.
         this.felled++
+        this.fight(foe.kind as BossId).felled = true
         events.push({ type: 'felled', boss: foe.kind as BossId, at: fallen })
         const waiting = this.loadout.filter(spell => !this.blessed[spell]).length
         if (waiting > this.boons) {
@@ -887,7 +956,7 @@ export class Battle {
     for (const seed of woken) {
       events.push({ type: 'burst', at: { x: seed.x, y: seed.y }, radius: stats.range })
       for (const foe of this.targets()) {
-        if (gap(foe, seed) < stats.range) this.strike(foe, stats.damage, events)
+        if (gap(foe, seed) < stats.range) this.strike(foe, stats.damage, events, 'seeds')
       }
       if (!this.blessed.seeds) continue
       for (const other of this.seeds) {
@@ -908,7 +977,7 @@ export class Battle {
         if (foe.stung > 0 || Math.hypot(foe.x - x, foe.y - y) >= fireflyRule.hit) continue
         foe.stung = stats.cooldown
         events.push({ type: 'sting', at: { x: foe.x, y: foe.y } })
-        this.strike(foe, stats.damage, events)
+        this.strike(foe, stats.damage, events, 'fireflies')
       }
     }
   }
@@ -935,7 +1004,7 @@ export class Battle {
         foe.x += ((foe.x - at.x) / distance) * push
         foe.y += ((foe.y - at.y) / distance) * push
       }
-      for (const foe of struck) this.strike(foe, stats.damage * share, events)
+      for (const foe of struck) this.strike(foe, stats.damage * share, events, 'toll')
     }
     for (const foe of this.foes) foe.stung = Math.max(0, foe.stung - dt)
     // Blessed leftovers of earlier casts: silver trails and bell echoes.
@@ -948,7 +1017,7 @@ export class Battle {
         trail.beat += beat
         trail.cuts--
         for (const foe of this.targets()) {
-          if (inSwing(foe, trail.at, trail.facing, trail.range, trail.arc)) this.strike(foe, damage * share, events)
+          if (inSwing(foe, trail.at, trail.facing, trail.range, trail.arc)) this.strike(foe, damage * share, events, 'moonblade')
         }
         return trail.cuts > 0
       })
@@ -991,7 +1060,7 @@ export class Battle {
           events.push({ type: 'bloom', at: { x: hit.x, y: hit.y }, radius })
           for (const foe of open) {
             if (foe !== hit && Math.hypot(foe.x - hit.x, foe.y - hit.y) < radius) {
-              this.strike(foe, stats.damage * share, events)
+              this.strike(foe, stats.damage * share, events, 'witchfire')
             }
           }
         }
@@ -1023,7 +1092,7 @@ export class Battle {
         events.push({ type: 'sow', at })
       }
       this.timers[id] = stats.cooldown
-      for (const foe of struck) this.strike(foe, stats.damage, events)
+      for (const foe of struck) this.strike(foe, stats.damage, events, id)
     }
   }
 
@@ -1032,6 +1101,8 @@ export class Battle {
     if (this.phase !== 'playing') return events
     this.elapsed += dt
     if (this.stage === 'court') this.trials(dt, events)
+    const boss = this.boss
+    if (boss) this.fight(boss.kind as BossId).time += dt
     const area = court
     const length = Math.hypot(dx, dy)
     const pace = heroes[this.hero].speed * (1 + this.rank('boots') * relics.boots.amount)
@@ -1097,7 +1168,7 @@ export class Battle {
         foe.y += toward.y * travel
       }
       const remaining = Math.hypot(this.player.x - foe.x, this.player.y - foe.y)
-      if (remaining < this.reach(foe)) this.wound(this.bite(foe))
+      if (remaining < this.reach(foe)) this.wound(foe.kind, this.bite(foe))
     }
     this.feed(events)
     this.guard(dt, events)
@@ -1111,11 +1182,12 @@ export class Battle {
       )
       if (pillar) {
         pillar.hits--
+        if (!pillar.hits) this.tally.pillars++
         events.push({ type: pillar.hits ? 'block' : 'crumble', at: { x: pillar.x, y: pillar.y } })
         return false
       }
       const struck = Math.hypot(arrow.x - this.player.x, arrow.y - this.player.y) < archerVolley.hit
-      if (struck) this.wound()
+      if (struck) this.wound(arrow.by)
       return !struck && arrow.life > 0
     })
     if ((this.phase as Phase) === 'lost') return events

@@ -1067,7 +1067,7 @@ test('the thorn storm: she stops, warns, then turns and looses rings of thorns, 
   }
   assert.equal(lady.health, health)
   assert.deepEqual(during.filter(event => ['shot', 'kill', 'burst', 'sting', 'chain', 'bloom'].includes(event.type)), [])
-  b.strike(lady, 1e6, [])
+  b.strike(lady, 1e6, [], 'witchfire')
   assert.equal(lady.health, health)
   assert.equal(b.phase, 'playing')
   rings += during.filter(event => event.type === 'volley').length
@@ -1089,7 +1089,7 @@ test('the thorn storm: she stops, warns, then turns and looses rings of thorns, 
   run(30)
   assert.ok(lady.y > stood.y)
   assert.equal(lady.speed, duelRule.speed)
-  b.strike(lady, 10, [])
+  b.strike(lady, 10, [], 'witchfire')
   assert.equal(lady.health, health - 10)
 })
 
@@ -1193,7 +1193,7 @@ test('sprouted gates open near the hero, three at most, and send foes until they
   many.b.spells.witchfire.range = 0
   const broken = many.b.foes.find(foe => foe.kind === 'portal')
   const events = []
-  many.b.strike(broken, 1e6, events)
+  many.b.strike(broken, 1e6, events, 'witchfire')
   assert.deepEqual(events.map(event => event.type), ['kill'])
   assert.equal(count(), 2)
   assert.equal(many.b.felled, 0)
@@ -3004,7 +3004,7 @@ test('spells neither aim at nor wound an archer whose candle is out, and every s
   }
   // A blow thrown straight at an unlit archer is turned aside too.
   const { b, ring } = posted()
-  b.strike(ring[3], 1e6, [])
+  b.strike(ring[3], 1e6, [], 'witchfire')
   assert.equal(ring[3].health, ring[3].full)
   assert.equal(b.foes.length, 5)
 })

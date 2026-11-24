@@ -13,6 +13,8 @@ import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
 import { glyphs, iconMarkup } from './icons'
 import { load, settle, store } from './progress'
+import type { BestId } from './progress'
+import { report } from './report'
 import { Sound } from './sound'
 import type { Cue } from './sound'
 import { tipIds, Tutor } from './tutor'
@@ -51,6 +53,11 @@ const volume = document.querySelector<HTMLInputElement>('#volume')!
 const arena = document.querySelector<HTMLElement>('#arena')!
 const cardsLabel = document.querySelector<HTMLElement>('#cards-label')!
 const cardsMessage = document.querySelector<HTMLElement>('#cards-message')!
+const stats = document.querySelector<HTMLElement>('#stats')!
+const statsTitle = document.querySelector<HTMLElement>('#stats-title')!
+const statsTabs = document.querySelector<HTMLElement>('#stats-tabs')!
+const statsBody = document.querySelector<HTMLElement>('#stats-body')!
+const statTabs = ['summary', 'damage', 'bosses', 'wounds'] as const
 const directions = new Set([
   'KeyW',
   'KeyA',
@@ -110,6 +117,9 @@ class Arena extends Phaser.Scene {
   private difficulty = this.progress.difficulty
   private variant = false
   private rewards: Reward[] = []
+  // The player's own bests the last run has beaten, and the open section of its numbers.
+  private bests: BestId[] = []
+  private statTab: (typeof statTabs)[number] = 'summary'
   // Sound effects, the first-run tips, and what the scene watches to cue them:
   // how far the hero has walked, where they stood last frame, how many dangers
   // were marked, and the health of each foe a frame ago.
@@ -307,16 +317,19 @@ class Arena extends Phaser.Scene {
     const b = this.battle
     if (this.settled === b) return
     this.settled = b
-    const { progress, rewards } = settle(this.progress, {
+    const { progress, rewards, bests } = settle(this.progress, {
       hero: b.hero,
       difficulty: b.difficulty,
       won: b.phase === 'won',
       time: b.elapsed,
       kills: b.kills,
       felled: b.felled,
+      damage: report(b).damage,
     })
     this.progress = progress
     this.rewards = rewards
+    this.bests = bests
+    this.statTab = 'summary'
     store(progress)
     this.lastHero = ''
   }
@@ -997,6 +1010,7 @@ class Arena extends Phaser.Scene {
         : copy.status[b.phase]
     panel.hidden = b.phase === 'playing' || b.phase === 'choosing'
     cards.hidden = b.phase !== 'choosing'
+    stats.hidden = b.phase !== 'won' && b.phase !== 'lost'
     pause.disabled = b.phase !== 'playing'
     if (b.phase === 'choosing') this.showCards()
     if (b.phase === 'playing' || b.phase === 'choosing') return
@@ -1009,7 +1023,6 @@ class Arena extends Phaser.Scene {
       action.textContent = copy[b.phase].action
     } else {
       message.textContent = [
-        copy.result(timeText(Math.floor(b.elapsed)), b.kills, b.level),
         copy.build(b.loadout.map(id => copy.spells[id].name).join(', ')),
         copy.heroLine(copy.heroes[b.hero].name),
         ...b.loadout.filter(id => b.blessed[id]).map(id => copy.blessLine(copy.spells[id].name)),
@@ -1031,6 +1044,118 @@ class Arena extends Phaser.Scene {
         ...(b.phase === 'lost' ? [copy.fell[b.stage]] : []),
       ].join(' ')
       action.textContent = copy.retry
+      this.showStats()
+    }
+  }
+
+  // The numbers of the finished run, a section at a time.
+  private showStats() {
+    const copy = messages[language]
+    const words = copy.stats
+    const r = report(this.battle)
+    const locale = language === 'ru' ? 'ru-RU' : 'en-US'
+    const num = (value: number, digits = 0) =>
+      value.toLocaleString(locale, { maximumFractionDigits: digits, minimumFractionDigits: digits })
+    const percent = (share: number) => `${num(share * 100)}%`
+    const make = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = '') => {
+      const node = document.createElement(tag)
+      node.textContent = text
+      if (className) node.className = className
+      return node
+    }
+    // A table: the first column holds names, the rest hold numbers.
+    const table = (head: string[], rows: string[][]) => {
+      const grid = make('table')
+      const top = grid.createTHead().insertRow()
+      for (const text of head) top.append(make('th', text))
+      const body = grid.createTBody()
+      for (const cells of rows) {
+        const row = body.insertRow()
+        cells.forEach((text, index) => row.append(make(index ? 'td' : 'th', text)))
+      }
+      return grid
+    }
+    statsTitle.textContent = words.title
+    statsTabs.setAttribute('aria-label', words.tabsLabel)
+    statsTabs.replaceChildren(
+      ...statTabs.map(id => {
+        const tab = make('button', words.tabs[id])
+        tab.type = 'button'
+        tab.setAttribute('role', 'tab')
+        tab.setAttribute('aria-selected', String(id === this.statTab))
+        tab.onclick = () => {
+          this.statTab = id
+          this.showStats()
+        }
+        return tab
+      }),
+    )
+    statsBody.dataset.tab = this.statTab
+    if (this.statTab === 'summary') {
+      const timeBest = this.rewards.some(reward => reward.kind === 'record')
+      const tiles: [string, string, boolean][] = [
+        [words.time, timeText(Math.floor(r.time)), timeBest],
+        [words.felled, `${r.felled} / ${bossIds.length}`, false],
+        [words.kills, num(r.kills), this.bests.includes('kills')],
+        [words.damage, num(r.damage), this.bests.includes('damage')],
+        [words.dps, num(r.dps, 1), this.bests.includes('dps')],
+        [words.wounds, num(r.wounds), false],
+        [words.level, num(r.level), false],
+        [words.cards, num(r.cards), false],
+      ]
+      const list = make('dl', '', 'tiles')
+      for (const [name, value, best] of tiles) {
+        const tile = make('div')
+        const figure = make('dd', value)
+        if (best) figure.append(make('em', words.best))
+        tile.append(make('dt', name), figure)
+        list.append(tile)
+      }
+      statsBody.replaceChildren(list)
+    } else if (this.statTab === 'damage') {
+      statsBody.replaceChildren(
+        table(
+          [words.spell, words.dealt, words.share, words.banished, words.rate],
+          r.spells.map(row => [
+            copy.spells[row.id].name, num(row.damage), percent(row.share), num(row.kills), num(row.dps, 1),
+          ]),
+        ),
+        make('p', [
+          words.hardest(Number(r.hardest.toFixed(1)).toLocaleString(locale)),
+          words.split(num(r.bossDamage), percent(r.bossDamage / Math.max(1, r.damage)), num(r.damage - r.bossDamage)),
+        ].join(' ')),
+      )
+    } else if (this.statTab === 'bosses') {
+      statsBody.replaceChildren(
+        table(
+          [words.boss, words.fight, words.hurt, words.note],
+          r.bosses.map(row => {
+            if (!row.came) return [copy.bosses[row.id], '—', '—', words.absent]
+            const feat = row.id === 'mass'
+              ? words.feats.mass(row.count)
+              : row.id === 'duchess'
+                ? words.feats.duchess(row.count, r.pillars)
+                : words.feats[row.id](row.count, row.of)
+            return [
+              copy.bosses[row.id], timeText(Math.floor(row.time)), num(row.wounds),
+              `${row.felled ? words.down : words.stood} · ${feat}`,
+            ]
+          }),
+        ),
+      )
+    } else if (r.sources.length) {
+      const named = { ...copy.bosses, ...words.sources }
+      statsBody.replaceChildren(
+        table(
+          [words.source, words.pips, words.share],
+          r.sources.map(({ by, pips }) => [
+            by in named ? named[by as keyof typeof named] : copy[by as 'briarling'],
+            num(pips), percent(pips / r.wounds),
+          ]),
+        ),
+      )
+    } else {
+      statsBody.replaceChildren(make('p', words.unhurt))
     }
   }
 }

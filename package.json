@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node --test tests/*.test.mjs",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/battle.ts --test-coverage-include=src/content.ts --test-coverage-include=src/progress.ts --test-coverage-include=src/tutor.ts --test-coverage-include=src/icons.ts --test-coverage-include=src/i18n.ts tests/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/battle.ts --test-coverage-include=src/content.ts --test-coverage-include=src/progress.ts --test-coverage-include=src/tutor.ts --test-coverage-include=src/icons.ts --test-coverage-include=src/i18n.ts --test-coverage-include=src/report.ts tests/*.test.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {

@@ -8,7 +8,10 @@ import type { TipId } from './tutor.ts'
 export const saveKey = 'secret_game.save'
 export const saveVersion = 1
 
-export type Record = { wins: number; best: number | null; kills: number }
+// `kills`, `damage` and `dps` are the best of any run, won or lost.
+export type Record = { wins: number; best: number | null; kills: number; damage: number; dps: number }
+// A number of a run that can beat the player's own best.
+export type BestId = 'kills' | 'damage' | 'dps'
 export type Progress = {
   version: number
   // The highest difficulty open to the player, from 1.
@@ -33,6 +36,8 @@ export type Outcome = {
   kills: number
   // How many bosses fell during the run.
   felled: number
+  // Health taken from foes over the whole run.
+  damage: number
 }
 
 export type Reward =
@@ -47,7 +52,7 @@ export function fresh(): Progress {
     difficulty: 1,
     heroes: heroIds.filter(id => heroes[id].opens === 0),
     variants: [],
-    records: difficulties.map(() => ({ wins: 0, best: null, kills: 0 })),
+    records: difficulties.map(() => ({ wins: 0, best: null, kills: 0, damage: 0, dps: 0 })),
     volume: 0.6,
     tips: [],
   }
@@ -83,6 +88,8 @@ export function parse(raw: string | null): Progress {
         wins: Math.floor(whole(record.wins) ?? empty.wins),
         best: whole(record.best) ?? null,
         kills: Math.floor(whole(record.kills) ?? empty.kills),
+        damage: whole(record.damage) ?? empty.damage,
+        dps: whole(record.dps) ?? empty.dps,
       }
     }),
     volume: Math.min(1, whole(save.volume) ?? base.volume),
@@ -106,8 +113,11 @@ export function store(progress: Progress) {
   }
 }
 
-// Adds a finished run to the save and lists what it has newly earned.
-export function settle(before: Progress, run: Outcome): { progress: Progress; rewards: Reward[] } {
+// Adds a finished run to the save and lists what it has newly earned, and
+// which of the player's own bests it has beaten. A first result beats nothing.
+export function settle(
+  before: Progress, run: Outcome,
+): { progress: Progress; rewards: Reward[]; bests: BestId[] } {
   const progress: Progress = {
     ...before,
     heroes: [...before.heroes],
@@ -117,7 +127,9 @@ export function settle(before: Progress, run: Outcome): { progress: Progress; re
   }
   const rewards: Reward[] = []
   const record = progress.records[run.difficulty - 1]
-  record.kills = Math.max(record.kills, run.kills)
+  const values = { kills: run.kills, damage: run.damage, dps: run.damage / Math.max(1, run.time) }
+  const bests = (['kills', 'damage', 'dps'] as const).filter(id => record[id] > 0 && values[id] > record[id])
+  for (const id of ['kills', 'damage', 'dps'] as const) record[id] = Math.max(record[id], values[id])
   if (run.won) {
     record.wins++
     if (record.best === null || run.time < record.best) {
@@ -140,5 +152,5 @@ export function settle(before: Progress, run: Outcome): { progress: Progress; re
       rewards.push({ kind: 'hero', hero: id })
     }
   }
-  return { progress, rewards }
+  return { progress, rewards, bests }
 }

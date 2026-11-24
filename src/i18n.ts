@@ -149,8 +149,29 @@ const en = {
   },
   armorValue: (value: number, max: number) => `Armor ${value} of ${max}`,
   xpValue: (value: number, goal: number) => `Experience ${value} of ${goal}`,
-  result: (time: string, kills: number, level: number) =>
-    `Time survived: ${time}. Foes banished: ${kills}. Level reached: ${level}.`,
+  stats: {
+    title: 'THE RUN IN NUMBERS',
+    tabsLabel: 'Sections of the numbers',
+    tabs: { summary: 'Summary', damage: 'Damage', bosses: 'Bosses', wounds: 'Wounds' },
+    time: 'Time', felled: 'Bosses felled', kills: 'Banished', damage: 'Damage dealt', dps: 'Damage per second',
+    wounds: 'Armor lost', level: 'Level', cards: 'Cards taken',
+    best: 'best',
+    spell: 'Spell', dealt: 'Damage', share: 'Share', banished: 'Banished', rate: 'Per second',
+    hardest: (blow: string) => `Hardest single blow: ${blow}.`,
+    split: (bosses: string, share: string, rest: string) => `Into bosses: ${bosses} (${share}). Into the rest: ${rest}.`,
+    boss: 'Boss', fight: 'Fight', hurt: 'Armor lost', note: 'Notes',
+    down: 'felled', stood: 'not felled', absent: 'did not come',
+    feats: {
+      mass: (count: number) => `swallowed ${count}`,
+      sentinel: (count: number, of: number) => `fell ${count} of ${of}`,
+      retinue: (count: number, of: number) => `pieces ${count} of ${of}`,
+      guard: (count: number, of: number) => `archers ${count} of ${of}`,
+      duchess: (gates: number, columns: number) => `gates ${gates}, columns down ${columns}`,
+    },
+    source: 'What took it', pips: 'Armor',
+    sources: { arrow: 'Archer’s arrow', bolt: 'Candle Guard’s bolt', thorn: 'Thorn of the Duchess', patch: 'Briar patch' },
+    unhurt: 'Not a pip of armor lost.',
+  },
 }
 
 const ru: typeof en = {
@@ -304,8 +325,29 @@ const ru: typeof en = {
   },
   armorValue: (value, max) => `Броня ${value} из ${max}`,
   xpValue: (value, goal) => `Опыт ${value} из ${goal}`,
-  result: (time, kills, level) =>
-    `Время в бою — ${time}. Изгнано врагов — ${kills}. Достигнут уровень — ${level}.`,
+  stats: {
+    title: 'ЗАБЕГ В ЦИФРАХ',
+    tabsLabel: 'Разделы статистики',
+    tabs: { summary: 'Сводка', damage: 'Урон', bosses: 'Боссы', wounds: 'Раны' },
+    time: 'Время', felled: 'Побеждено боссов', kills: 'Изгнано', damage: 'Нанесено урона', dps: 'Урон в секунду',
+    wounds: 'Потеряно брони', level: 'Уровень', cards: 'Взято карт',
+    best: 'рекорд',
+    spell: 'Заклинание', dealt: 'Урон', share: 'Доля', banished: 'Изгнано', rate: 'В секунду',
+    hardest: blow => `Самый сильный удар: ${blow}.`,
+    split: (bosses, share, rest) => `По боссам: ${bosses} (${share}). По остальным: ${rest}.`,
+    boss: 'Босс', fight: 'Бой', hurt: 'Потеряно брони', note: 'Заметки',
+    down: 'повержен', stood: 'устоял', absent: 'не пришёл',
+    feats: {
+      mass: count => `проглотил ${count}`,
+      sentinel: (count, of) => `падал ${count} из ${of}`,
+      retinue: (count, of) => `осколков ${count} из ${of}`,
+      guard: (count, of) => `стрелков ${count} из ${of}`,
+      duchess: (gates, columns) => `врат ${gates}, колонн упало ${columns}`,
+    },
+    source: 'Что ранило', pips: 'Броня',
+    sources: { arrow: 'Стрела лучника', bolt: 'Стрела караула', thorn: 'Шип Княгини', patch: 'Терновая поросль' },
+    unhurt: 'Броня цела: ни одной раны.',
+  },
 }
 
 export const messages = { en, ru }
