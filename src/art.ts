@@ -509,6 +509,27 @@ export function massTexture() {
   })
 }
 
+// The Sleepless Warder: a hollow night watchman in a pale cloak, with a cold
+// lantern on a pole. The scene dims it while it lies between lives.
+export function warderTexture() {
+  return texture(96, 96, p => {
+    p.translate(48, 48)
+    circle(p, -3, 3, 36, '#17131c')
+    // A ragged cloak trailing behind.
+    polygon(p, [[-34,-20],[-10,-30],[14,-22],[20,0],[14,22],[-10,30],[-34,20],[-26,8],[-36,0],[-26,-8]], '#2f3a5e')
+    polygon(p, [[-24,-14],[-8,-22],[10,-16],[14,0],[10,16],[-8,22],[-24,14],[-18,0]], '#46548a')
+    // Shoulders and a hooded helm with two cold eyes.
+    polygon(p, [[-6,-20],[8,-16],[8,16],[-6,20],[-12,0]], '#6c7bb5')
+    circle(p, 4, 0, 11, '#1d2238')
+    circle(p, 9, -4, 2.4, '#bfe3ff')
+    circle(p, 9, 4, 2.4, '#bfe3ff')
+    // The lantern pole held forward.
+    box(p, 8, 17, 30, 3, '#8a7a5a')
+    circle(p, 38, 18, 7, '#3a4470')
+    circle(p, 38, 18, 4, '#bfe3ff')
+  })
+}
+
 // A boss before it gets a look of its own: a stooped giant of roots, told
 // from the others by the colour of its growth and eyes.
 export function bossTexture(growth: string, eyes: string) {

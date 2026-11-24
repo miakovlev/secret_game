@@ -130,10 +130,11 @@ export const foes: Record<FoeKind, FoeStats> = {
   // A healer moth: frail, hangs back and mends the most wounded foe near it.
   moth: { health: 12, healthGrowth: 0.02, speed: 105, speedSpread: 10, speedGrowth: 0, reach: 16, ember: 4 },
   // The Briar Mass rolls after the warden and swallows briarlings (see massRule).
-  // The three bosses after it are plain, very tough pursuers until each gets
+  // The Sleepless Warder falls and rises again (see warderRule); its health is for one life.
+  // The two bosses after it are plain, very tough pursuers until each gets
   // its own way of fighting.
   mass: { health: 340, healthGrowth: 0, speed: 72, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
-  sentinel: { health: 900, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
+  sentinel: { health: 380, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
   retinue: { health: 1500, healthGrowth: 0, speed: 66, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 16 },
   guard: { health: 2200, healthGrowth: 0, speed: 74, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 18 },
   // The seal-flower is rooted; the Duchess walks at her own pace (see duelRule). Neither leaves embers.
@@ -154,6 +155,11 @@ export const massRule = {
   slow: 2.5,
   biteEvery: 8,
 }
+
+// The Sleepless Warder has `lives` lives. Felled with a life to spare, it lies
+// for `rest` seconds where it fell, out of reach of every spell, then rises
+// with full health and `quicken` of its first speed added for each fall.
+export const warderRule = { lives: 3, rest: 3, quicken: 0.3 }
 
 // Felling a boss blesses one learned spell.
 export const blessings = {

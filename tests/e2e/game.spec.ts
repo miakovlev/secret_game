@@ -458,6 +458,73 @@ test('a boss comes on its minute, and felling it blesses one spell', async ({ pa
   expect(errors).toEqual([])
 })
 
+test('the Sleepless Warder falls, lies marked and rises twice before it is felled', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await seedSave(page, { ...everything, heroes: ['warden'], variants: [] })
+  await frozenClock(page)
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  await page.getByRole('button', { name: 'Start run' }).click()
+  const hint = page.locator('#hint')
+  const label = page.locator('#clock-label')
+  const clock = page.locator('#clock')
+  const state = () => page.evaluate(() => {
+    const { battle } = (window as any).arena
+    const boss = battle.boss
+    return { kind: boss?.kind, mode: boss?.mode, falls: boss?.falls, speed: boss?.speed, felled: battle.felled, boons: battle.boons }
+  })
+  // The second boss is due; the waves are held back to watch it alone.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.bossIndex = 1
+    battle.calm = 179.9
+    battle.immunity = 1e6
+    battle.schedule.splice(0)
+    battle.spells.witchfire.range = 0
+  })
+  await page.clock.runFor(500)
+  expect(await state()).toMatchObject({ kind: 'sentinel', mode: 'chase', falls: 0 })
+  await expect(label).toHaveText('SLEEPLESS WARDER 1/3')
+  await expect(clock).toHaveText('100%')
+  await expect(hint).toHaveText(/The Sleepless Warder rises twice after it falls, quicker each time\. Nothing hurts it while it lies/)
+  await select(page, 'ru')
+  await expect(label).toHaveText('НЕУСЫПНЫЙ СТОРОЖ 1/3')
+  await expect(hint).toHaveText(/Неусыпный сторож дважды встаёт после гибели/)
+  await select(page, 'en')
+  const first = (await state()).speed
+
+  // One overwhelming spark: it falls once, lies out of reach and is not counted as felled.
+  const strike = () => page.evaluate(() => {
+    const { battle } = (window as any).arena
+    Object.assign(battle.spells.witchfire, { range: 4000, damage: 1e6 })
+    battle.timers.witchfire = 0
+  })
+  for (let life = 1; life <= 2; life++) {
+    await strike()
+    await page.clock.runFor(1000)
+    expect(await state()).toMatchObject({ kind: 'sentinel', mode: 'down', falls: life, felled: 0, boons: 0 })
+    await expect(clock).toHaveText('0%')
+    await expect(label).toHaveText(`SLEEPLESS WARDER ${life + 1}/3`)
+    await expect(page.locator('#cards')).toBeHidden()
+    // Three seconds on the ground, then it is whole again and quicker.
+    await page.clock.runFor(1500)
+    expect((await state()).mode).toBe('down')
+    await page.evaluate(() => { (window as any).arena.battle.spells.witchfire.range = 0 })
+    await page.clock.runFor(1000)
+    expect(await state()).toMatchObject({ mode: 'chase', falls: life })
+    await expect(clock).toHaveText('100%')
+  }
+  expect((await state()).speed).toBeGreaterThan(first * 1.5)
+
+  // The third fall is the last: the blessing comes only now.
+  await strike()
+  for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  await expect(page.getByRole('heading', { name: 'A blessing' })).toBeVisible()
+  expect(await state()).toMatchObject({ felled: 1 })
+  expect((await state()).kind).toBeUndefined()
+  expect(errors).toEqual([])
+})
+
 test('winning opens the next difficulty and a starting relic, and the save survives a reload', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))

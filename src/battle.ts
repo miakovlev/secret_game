@@ -1,5 +1,5 @@
 import {
-  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, massRule, mothHeal, oil, relicIds,
+  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, massRule, mothHeal, warderRule, oil, relicIds,
   relicRule,
   relics, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
@@ -12,7 +12,7 @@ export type Point = { x: number; y: number }
 // A foe chases the warden by default. A boar goes chase → windup → charge →
 // rest; an archer goes chase → aim → volley. `timer` counts down the current
 // mode (or an archer's reload), `dir` is the locked direction of a charge or volley.
-export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley'
+export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley' | 'down'
 export type Foe = Point & {
   kind: FoeKind
   speed: number
@@ -27,6 +27,8 @@ export type Foe = Point & {
   stung: number
   // How many foes the Briar Mass has swallowed.
   grown: number
+  // How many times the Sleepless Warder has fallen.
+  falls: number
 }
 export type Arrow = Point & { vx: number; vy: number; life: number }
 export type Seed = Point & { life: number }
@@ -44,6 +46,8 @@ export type BattleEvent =
   | { type: 'boss'; boss: BossId }
   | { type: 'felled'; boss: BossId; at: Point }
   | ({ type: 'absorb' } & Shot)
+  | { type: 'fall'; at: Point; falls: number }
+  | { type: 'rise'; at: Point }
   | { type: 'summon'; at: Point }
   | { type: 'bloom'; at: Point; radius: number }
   | { type: 'open'; at: Point }
@@ -79,7 +83,7 @@ export function xpGoal(level: number) {
 }
 
 export function makeFoe(kind: FoeKind, x: number, y: number, speed: number, health: number): Foe {
-  return { kind, x, y, speed, health, full: health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0, grown: 0 }
+  return { kind, x, y, speed, health, full: health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0, grown: 0, falls: 0 }
 }
 
 // How many times the wave's group has been due by the given second of the run.
@@ -598,7 +602,7 @@ export class Battle {
   // Foes a spell may hit: a shielded Duchess cannot be hurt or even aimed at.
   private targets() {
     const guarded = this.shielded
-    return this.foes.filter(foe => foe.kind !== 'duchess' || !guarded)
+    return this.foes.filter(foe => foe.mode !== 'down' && (foe.kind !== 'duchess' || !guarded))
   }
 
   // How close a foe must be to wound the warden. The Briar Mass grows.
@@ -662,8 +666,18 @@ export class Battle {
   private strike(foe: Foe, damage: number, events: BattleEvent[]) {
     // One cast can name the same foe twice (a spark blooms on it, then leaps
     // to it); a foe already felled takes no second blow.
-    if (!this.foes.includes(foe)) return
+    // Nor does the Sleepless Warder while it lies between lives.
+    if (!this.foes.includes(foe) || foe.mode === 'down') return
     foe.health -= damage
+    if (foe.kind === 'sentinel' && foe.health <= 0 && foe.falls < warderRule.lives - 1) {
+      // However hard the blow, it costs the Warder one life.
+      foe.falls++
+      foe.health = 0
+      foe.mode = 'down'
+      foe.timer = warderRule.rest
+      events.push({ type: 'fall', at: { x: foe.x, y: foe.y }, falls: foe.falls })
+      return
+    }
     // Each threshold of her health passed begins a new phase, once.
     while (
       foe.kind === 'duchess' && foe.health > 0 &&
@@ -910,7 +924,14 @@ export class Battle {
       const distance = Math.hypot(vx, vy)
       const toward = distance > 0 ? { x: vx / distance, y: vy / distance } : { x: 0, y: 0 }
       foe.timer = Math.max(0, foe.timer - dt)
-      if (foe.kind === 'boar') {
+      if (foe.mode === 'down') {
+        // The Warder lies harmless, then rises where it fell, whole and quicker.
+        if (foe.timer > 0) continue
+        foe.mode = 'chase'
+        foe.health = foe.full
+        foe.speed = foes[foe.kind].speed * (1 + warderRule.quicken * foe.falls)
+        events.push({ type: 'rise', at: { x: foe.x, y: foe.y } })
+      } else if (foe.kind === 'boar') {
         this.boar(foe, dt, distance, toward)
       } else if (foe.kind === 'archer') {
         this.archer(foe, dt, distance, toward, events)

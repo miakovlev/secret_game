@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bossIds, bossRule, massRule, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
+import { bossIds, bossRule, massRule, warderRule, spellIds, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
   relics, seedRule, oil, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
@@ -2131,7 +2131,7 @@ test('a felled boss blesses one learned spell, and leaves a reliquary when none 
     learn(b, 'toll')
     b.timers.toll = 9
     Object.assign(b.blessed, blessed)
-    const boss = makeFoe('sentinel', b.player.x + 80, b.player.y, 0, 0.1)
+    const boss = makeFoe('retinue', b.player.x + 80, b.player.y, 0, 0.1)
     b.foes = [boss]
     b.spells.witchfire.range = 2000
     const events = b.step(0, 0, 0)
@@ -2141,7 +2141,7 @@ test('a felled boss blesses one learned spell, and leaves a reliquary when none 
   assert.deepEqual(first.events.map(event => event.type), ['shot', 'kill', 'felled'])
   assert.equal(first.b.boons, 1)
   assert.deepEqual(first.b.reliquaries, [])
-  assert.equal(first.b.embers.at(-1).value, foes.sentinel.ember)
+  assert.equal(first.b.embers.at(-1).value, foes.retinue.ember)
   // The blessing is offered on the next step, one card per learned spell.
   first.b.embers = []
   first.b.spells.witchfire.range = 0
@@ -2355,4 +2355,137 @@ test('the third minute brings the Briar Mass among the wave, and it feeds on it'
   b.timers.witchfire = 0
   b.foes = [b.boss]
   assert.ok(b.step(1 / 30, 0, 0).some(event => event.type === 'felled' && event.boss === 'mass'))
+})
+
+// --- Step 5.3: the Sleepless Warder.
+
+// A still court with the Warder beside the warden, no waves, and witchfire ready to fire.
+function watch(health = 1) {
+  const b = playing(() => 0.5)
+  b.schedule.splice(0)
+  b.calm = -1e9
+  b.immunity = 1e9
+  const warder = makeFoe('sentinel', b.player.x + 120, b.player.y, 0, foes.sentinel.health)
+  warder.health = health
+  b.foes = [warder]
+  b.spells.witchfire.range = 2000
+  b.timers.witchfire = 0
+  return { b, warder }
+}
+// Steps until an event of the given type comes, and returns everything seen on the way.
+function until(b, type, limit = 60 * 60) {
+  const seen = []
+  for (let i = 0; i < limit && !seen.some(event => event.type === type); i++) {
+    if (b.phase === 'choosing') b.choose(0)
+    seen.push(...b.step(1 / 60, 0, 0))
+  }
+  return seen
+}
+
+test('the Sleepless Warder rises exactly twice, whole and quicker each time, and blesses only after the third fall', () => {
+  assert.deepEqual(warderRule.lives, 3)
+  const { b, warder } = watch()
+  const speeds = []
+  for (let life = 1; life < warderRule.lives; life++) {
+    const fall = until(b, 'fall')
+    assert.deepEqual(fall.filter(event => event.type !== 'shot'), [{ type: 'fall', at: { x: warder.x, y: warder.y }, falls: life }])
+    assert.deepEqual([warder.mode, warder.health, warder.falls, warder.timer], ['down', 0, life, warderRule.rest])
+    // Not banished, not felled, nothing dropped, no blessing yet.
+    assert.deepEqual([b.kills, b.felled, b.boons, b.embers.length, b.reliquaries.length], [0, 0, 0, 0, 0])
+    assert.equal(b.boss, warder)
+    const at = b.elapsed
+    const rise = until(b, 'rise')
+    assert.deepEqual(rise.filter(event => event.type !== 'shot'), [{ type: 'rise', at: { x: warder.x, y: warder.y } }])
+    assert.ok(Math.abs(b.elapsed - at - warderRule.rest) < 0.02)
+    // Whole again; the spark of the same step may already have landed.
+    const sparks = rise.filter(event => event.type === 'shot').length
+    assert.deepEqual([warder.mode, warder.health], ['chase', foes.sentinel.health - sparks * b.spells.witchfire.damage])
+    assert.equal(warder.full, foes.sentinel.health)
+    speeds.push(warder.speed)
+    warder.speed = 0
+    warder.health = 1
+  }
+  assert.deepEqual(speeds, [1 + warderRule.quicken, 1 + 2 * warderRule.quicken].map(by => foes.sentinel.speed * by))
+  assert.ok(foes.sentinel.speed < speeds[0] && speeds[0] < speeds[1])
+  // Even on its last life the warden can still outrun it.
+  assert.ok(speeds[1] < Math.min(...heroIds.map(id => heroes[id].speed)))
+
+  // The third fall is the end of it.
+  const last = until(b, 'felled')
+  assert.deepEqual(last.filter(event => event.type !== 'shot').map(event => event.type), ['kill', 'felled'])
+  assert.deepEqual([b.kills, b.felled, b.boons, b.embers.length], [1, 1, 1, 1])
+  assert.equal(b.boss, undefined)
+  assert.deepEqual(b.foes, [])
+  assert.deepEqual(until(b, 'rise', 600).filter(event => event.type === 'rise' || event.type === 'fall'), [])
+})
+
+test('a blow far beyond its health costs the Sleepless Warder one life, not two', () => {
+  const { b, warder } = watch(foes.sentinel.health)
+  b.spells.witchfire.damage = 1e6
+  // A blessed spark blooms on it and leaps: several blows land in the same cast.
+  b.blessed.witchfire = true
+  const other = makeFoe('knight', warder.x + 20, warder.y, 0, 1e9)
+  b.foes.push(other)
+  b.sparks = 2
+  const events = b.step(0, 0, 0)
+  assert.equal(events.filter(event => event.type === 'fall').length, 1)
+  assert.deepEqual([warder.falls, warder.health, warder.mode], [1, 0, 'down'])
+  assert.ok(b.foes.includes(warder))
+})
+
+test('nothing aims at or wounds the Sleepless Warder while it lies, and it wounds no one', () => {
+  for (const spell of spellIds) {
+    const { b, warder } = watch()
+    b.immunity = 0
+    until(b, 'fall')
+    assert.equal(warder.mode, 'down')
+    // Stand on top of it with every spell tuned to hit.
+    learn(b, spell)
+    Object.assign(b.spells[spell], { damage: 50, range: 400, cooldown: 0.05 })
+    b.blessed[spell] = true
+    Object.assign(b.player, { x: warder.x, y: warder.y })
+    const events = []
+    for (let i = 0; i < Math.round((warderRule.rest - 0.5) * 60); i++) events.push(...b.step(1 / 60, i % 2 ? 1 : -1, 0))
+    assert.deepEqual([warder.mode, warder.health, warder.falls], ['down', 0, 1], spell)
+    assert.deepEqual(events.filter(event => ['shot', 'kill', 'fall', 'burst', 'sting', 'chain'].includes(event.type)), [], spell)
+    assert.equal(b.armor, MAX_ARMOR, spell)
+    assert.ok(Math.hypot(warder.x - b.player.x, warder.y - b.player.y) < 2)
+    // A foe beside it is still fair game.
+    const near = makeFoe('briarling', warder.x + 30, warder.y, 0, 1)
+    b.foes.push(near)
+    until(b, 'kill', 60)
+    assert.ok(!b.foes.includes(near), spell)
+    assert.equal(warder.health, 0, spell)
+  }
+  // Risen on top of the warden, it wounds again.
+  const { b, warder } = watch()
+  b.immunity = 0
+  b.spells.witchfire.damage = 0.5
+  until(b, 'fall')
+  b.spells.witchfire.range = 0
+  Object.assign(b.player, { x: warder.x, y: warder.y })
+  until(b, 'rise')
+  assert.equal(b.armor, MAX_ARMOR - 1)
+})
+
+test('the sixth minute brings the Sleepless Warder, and the count to the next boss waits through all its lives', () => {
+  const b = before(1)
+  b.schedule.splice(0)
+  advance(b, 6)
+  const warder = b.boss
+  assert.equal(warder.kind, 'sentinel')
+  assert.equal(warder.full, foes.sentinel.health)
+  b.spells.witchfire.range = 4000
+  b.spells.witchfire.damage = 1e6
+  until(b, 'fall')
+  until(b, 'rise')
+  assert.equal(b.calm, 0)
+  assert.equal(b.boss, warder)
+  until(b, 'felled')
+  assert.equal(warder.falls, warderRule.lives - 1)
+  assert.equal(b.felled, 1)
+  b.spells.witchfire.range = 0
+  until(b, 'none', 60)
+  assert.ok(b.calm > 0)
+  assert.deepEqual(b.nextBoss.boss, 'retinue')
 })
