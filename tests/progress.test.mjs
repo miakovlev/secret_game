@@ -7,7 +7,7 @@ import { tipIds, Tutor } from '../src/tutor.ts'
 
 const run = (over = {}) => ({
   hero: 'warden', difficulty: 1, won: false, time: 300, kills: 80,
-  reachedDuel: false, felledBoss: false, ...over,
+  felled: 0, ...over,
 })
 
 function withStorage(storage, check) {
@@ -39,7 +39,7 @@ test('a new player has the first difficulty, the warden and empty records', () =
   assert.equal(start.records.length, difficulties.length)
   assert.equal(difficulties.length, 3)
   for (const record of start.records) assert.deepEqual(record, { wins: 0, best: null, kills: 0 })
-  assert.equal(heroes.warden.opens, 'start')
+  assert.equal(heroes.warden.opens, 0)
   assert.notDeepEqual(heroIds, start.heroes)
 })
 
@@ -66,29 +66,37 @@ test('the first win opens the second difficulty and a win there opens the third'
 })
 
 test('a lost run opens no difficulty but still counts toward heroes and the banished record', () => {
-  const lost = settle(fresh(), run({ kills: 140, reachedDuel: true }))
+  // One boss felled opens the Bellringer; nothing is opened by a run that fells none.
+  const none = settle(fresh(), run({ kills: 30 }))
+  assert.deepEqual(none.rewards, [])
+  const lost = settle(none.progress, run({ kills: 140, felled: 1 }))
   assert.equal(lost.progress.difficulty, 1)
-  assert.deepEqual(lost.rewards, [{ kind: 'hero', hero: 'duelist' }])
-  assert.deepEqual(lost.progress.heroes, ['warden', 'duelist'])
+  assert.deepEqual(lost.rewards, [{ kind: 'hero', hero: 'ringer' }])
+  assert.deepEqual(lost.progress.heroes, ['warden', 'ringer'])
   assert.deepEqual(lost.progress.records[0], { wins: 0, best: null, kills: 140 })
   // Fewer banished later does not lower the record, and the hero is not opened twice.
-  const later = settle(lost.progress, run({ kills: 20, reachedDuel: true }))
+  const later = settle(lost.progress, run({ kills: 20, felled: 1 }))
   assert.equal(later.progress.records[0].kills, 140)
   assert.deepEqual(later.rewards, [])
 
-  const bell = settle(later.progress, run({ felledBoss: true }))
-  assert.deepEqual(bell.rewards, [{ kind: 'hero', hero: 'ringer' }])
-  assert.deepEqual(bell.progress.heroes, ['warden', 'duelist', 'ringer'])
-  assert.deepEqual([heroes.duelist.opens, heroes.ringer.opens], ['duel', 'boss'])
+  // Two bosses in one run open the Duelist.
+  const two = settle(later.progress, run({ felled: 2 }))
+  assert.deepEqual(two.rewards, [{ kind: 'hero', hero: 'duelist' }])
+  assert.deepEqual(two.progress.heroes, ['warden', 'ringer', 'duelist'])
+  assert.deepEqual([heroes.warden.opens, heroes.ringer.opens, heroes.duelist.opens], [0, 1, 2])
+  // A first run that fells two opens both at once.
+  assert.deepEqual(settle(fresh(), run({ felled: 2 })).rewards.map(reward => reward.hero), ['duelist', 'ringer'])
 })
 
 test('a win opens the starting relic of the hero who won, and a faster win sets a record', () => {
-  const first = settle(fresh(), run({ won: true, time: 650, reachedDuel: true }))
+  // A won run has felled all five bosses, so it opens both locked heroes too.
+  const first = settle(fresh(), run({ won: true, time: 650, felled: 5 }))
   assert.deepEqual(first.rewards, [
-    { kind: 'record' }, { kind: 'difficulty', level: 2 }, { kind: 'variant', hero: 'warden' }, { kind: 'hero', hero: 'duelist' },
+    { kind: 'record' }, { kind: 'difficulty', level: 2 }, { kind: 'variant', hero: 'warden' },
+    { kind: 'hero', hero: 'duelist' }, { kind: 'hero', hero: 'ringer' },
   ])
   assert.deepEqual(first.progress.variants, ['warden'])
-  const slower = settle(first.progress, run({ won: true, time: 700, hero: 'duelist', reachedDuel: true }))
+  const slower = settle(first.progress, run({ won: true, time: 700, hero: 'duelist', felled: 5 }))
   assert.deepEqual(slower.rewards, [{ kind: 'variant', hero: 'duelist' }])
   assert.equal(slower.progress.records[0].best, 650)
   const faster = settle(slower.progress, run({ won: true, time: 600 }))
@@ -103,7 +111,7 @@ test('progress survives a reload through storage', () => {
   const storage = memory()
   withStorage(storage, () => {
     assert.deepEqual(load(), fresh())
-    const { progress } = settle(fresh(), run({ won: true, time: 630, reachedDuel: true, felledBoss: true }))
+    const { progress } = settle(fresh(), run({ won: true, time: 630, felled: 5 }))
     store(progress)
     assert.equal(JSON.parse(storage.values.get(saveKey)).version, saveVersion)
     assert.deepEqual(load(), progress)
@@ -237,5 +245,5 @@ test('a save from before the bosses keeps the Bellringer it had opened', () => {
   assert.deepEqual(progress.heroes, ['warden', 'ringer'])
   assert.deepEqual(progress.variants, ['ringer'])
   // Felling a boss again earns nothing new for that hero.
-  assert.deepEqual(settle(progress, run({ felledBoss: true })).rewards, [])
+  assert.deepEqual(settle(progress, run({ felled: 1 })).rewards, [])
 })

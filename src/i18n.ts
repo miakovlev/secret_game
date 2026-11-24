@@ -30,7 +30,7 @@ const en = {
     { name: 'Early Bells', about: 'Every wave also starts 20 seconds sooner, and foes are tougher still.' },
   ],
   lockedDifficulty: (name: string) => `Win on ${name} to open.`,
-  locks: { duel: 'Locked. Hold out until the Duchess comes.', boss: 'Locked. Fell any boss once.' },
+  lock: (bosses: number) => bosses === 1 ? 'Locked. Fell any boss once.' : `Locked. Fell ${bosses} bosses in one run.`,
   variantLabel: (relic: string) => `Start with ${relic}`,
   variantLocked: (relic: string) => `Win with this hero to start with ${relic}.`,
   recordLine: (best: string, wins: number) => `Best time ${best} · wins ${wins}.`,
@@ -183,7 +183,9 @@ const ru: typeof en = {
     { name: 'Ранние колокола', about: 'Каждая волна начинается на 20 секунд раньше, враги ещё крепче.' },
   ],
   lockedDifficulty: name => `Победи на сложности «${name}», чтобы открыть.`,
-  locks: { duel: 'Закрыт. Продержись до прихода Княгини.', boss: 'Закрыт. Победи любого босса.' },
+  lock: bosses => bosses === 1
+    ? 'Закрыт. Победи любого босса.'
+    : `Закрыт. Победи ${['двух', 'трёх', 'четырёх', 'пятерых'][bosses - 2]} боссов за один забег.`,
   variantLabel: relic => `Начать с реликвией «${relic}»`,
   variantLocked: relic => `Победи этим героем, чтобы начинать с реликвией «${relic}».`,
   recordLine: (best, wins) => `Лучшее время ${best} · побед ${wins}.`,

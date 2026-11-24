@@ -697,13 +697,14 @@ test('winning opens the next difficulty and a starting relic, and the save survi
   await expect(page.locator('#record')).toContainText('Win on First Watch to open.')
   await expect(heroes.nth(0)).toBeEnabled()
   await expect(heroes.nth(1)).toBeDisabled()
-  await expect(heroes.nth(1)).toContainText('Locked. Hold out until the Duchess comes.')
+  await expect(heroes.nth(1)).toContainText('Locked. Fell 2 bosses in one run.')
   await expect(heroes.nth(2)).toContainText('Locked. Fell any boss once.')
   await expect(variant).toBeDisabled()
   await expect(page.locator('#variant')).toContainText('Win with this hero to start with Amber Beads.')
   await select(page, 'ru')
   await expect(page.locator('#record')).toContainText('Побед пока нет.')
   await expect(heroes.nth(2)).toContainText('Закрыт. Победи любого босса.')
+  await expect(heroes.nth(1)).toContainText('Закрыт. Победи двух боссов за один забег.')
   await select(page, 'en')
 
   // Win the run: reach the Duchess with a boss felled on the way, then fell her.
@@ -851,6 +852,45 @@ test('first-run tips lead a new player to move, gather an ember and pick a card,
   await page.getByRole('button', { name: 'Start run' }).click()
   await page.clock.runFor(500)
   await expect(hint).toBeHidden()
+  expect(errors).toEqual([])
+})
+
+test('while a boss is in the court its hint takes the line, and the first-run tips wait', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await frozenClock(page)
+  await page.getByRole('button', { name: 'Start run' }).click()
+  const hint = page.locator('#hint')
+  await page.clock.runFor(300)
+  await expect(hint).toHaveText('Move with W A S D or the arrow keys.')
+  // A new player who has not moved yet when the first boss walks in.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.calm = 179.9
+    battle.immunity = 1e6
+    battle.schedule.splice(0)
+    battle.spells.witchfire.range = 0
+  })
+  await page.clock.runFor(500)
+  await expect(hint).toHaveText(/^The Briar Mass swallows the briarlings/)
+  const seen = () => page.evaluate(() => JSON.parse(localStorage.getItem('secret_game.save') ?? '{}').tips ?? [])
+  expect(await seen()).toEqual([])
+  // With the boss gone and the blessing taken, the lesson comes back where it stopped.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.boss.health = 0.5
+    battle.foes = [battle.boss]
+    battle.spells.witchfire.range = 2000
+  })
+  for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  await page.evaluate(() => { (window as any).arena.battle.spells.witchfire.range = 0 })
+  for (let turn = 0; turn < 6 && await page.locator('#cards').isVisible(); turn++) {
+    await page.locator('#choices button').first().click()
+    await page.clock.runFor(200)
+  }
+  await page.evaluate(() => { (window as any).arena.battle.embers = [] })
+  await page.clock.runFor(300)
+  await expect(hint).toHaveText('Move with W A S D or the arrow keys.')
   expect(errors).toEqual([])
 })
 

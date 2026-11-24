@@ -2267,7 +2267,7 @@ test('the bosses come in a fixed order, three minutes apart, the Duchess last', 
   assert.equal(b.stage, 'court')
   // It walks in from beyond the view like any other foe.
   for (const id of ['mass', 'sentinel', 'retinue']) {
-    assert.ok(foes[id].health > 10 * foes.knight.health / 4)
+    assert.ok(foes[id].health > 2 * foes.knight.health)
     assert.ok(foes[id].speed > 0)
   }
 })

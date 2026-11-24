@@ -288,7 +288,7 @@ class Arena extends Phaser.Scene {
         button.disabled = !open
         name.textContent = copy.heroes[id].name
         spell.append(icon(heroes[id].spell), copy.spells[heroes[id].spell].name)
-        gift.textContent = open || opens === 'start' ? copy.heroes[id].gift : copy.locks[opens]
+        gift.textContent = open ? copy.heroes[id].gift : copy.lock(opens)
         button.append(name, spell, gift)
         button.onclick = () => this.choose(() => { this.hero = id })
         return button
@@ -313,8 +313,7 @@ class Arena extends Phaser.Scene {
       won: b.phase === 'won',
       time: b.elapsed,
       kills: b.kills,
-      reachedDuel: b.stage === 'duel',
-      felledBoss: b.felled > 0,
+      felled: b.felled,
     })
     this.progress = progress
     this.rewards = rewards
@@ -822,7 +821,8 @@ class Arena extends Phaser.Scene {
     const copy = messages[language]
     const running = b.phase === 'playing' || b.phase === 'choosing'
     const learnt = this.tutor.seen.size
-    const lesson = running
+    // While a boss is in the court its own hint matters more: the lessons wait.
+    const lesson = running && !lord && !lady
       ? this.tutor.watch({
         walked: this.walked,
         embers: b.embers.length,

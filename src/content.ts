@@ -61,17 +61,17 @@ export type Hero = {
   chainRange: number
   // Multiplies how far the funeral toll pushes foes.
   knockback: number
-  // What opens the hero: available from the start, after first holding out
-  // until the Duchess comes, or after first felling a boss.
-  opens: 'start' | 'duel' | 'boss'
+  // How many bosses must be felled in one run to open the hero; 0 for the
+  // hero available from the start.
+  opens: number
   // The relic the hero may start with once a run has been won with them.
   variant: RelicId
 }
 
 export const heroes: Record<HeroId, Hero> = {
-  warden: { spell: 'witchfire', speed: 160, chain: 3, chainRange: 120, knockback: 1, opens: 'start', variant: 'beads' },
-  duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1, opens: 'duel', variant: 'boots' },
-  ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6, opens: 'boss', variant: 'cloak' },
+  warden: { spell: 'witchfire', speed: 160, chain: 3, chainRange: 120, knockback: 1, opens: 0, variant: 'beads' },
+  duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1, opens: 2, variant: 'boots' },
+  ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6, opens: 1, variant: 'cloak' },
 }
 
 // A hero can hold `slots` spells. A level-up shows `cards` cards, at most
@@ -134,14 +134,14 @@ export const foes: Record<FoeKind, FoeStats> = {
   // The Stone Retinue comes as one great guardian and breaks apart (see retinueRule,
   // which holds the numbers of every generation; these are the first one's).
   // The Candle Guard is five rooted archers (see guardRule); these numbers are for one of them.
-  mass: { health: 340, healthGrowth: 0, speed: 72, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
+  mass: { health: 200, healthGrowth: 0, speed: 62, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
   sentinel: { health: 380, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
-  retinue: { health: 900, healthGrowth: 0, speed: 62, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 8 },
-  guard: { health: 520, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 24, ember: 5 },
+  retinue: { health: 1100, healthGrowth: 0, speed: 66, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 8 },
+  guard: { health: 650, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 24, ember: 5 },
   // A sprouted gate of the Duchess is rooted and harmless to the touch; she walks
   // at her own pace (see duelRule). She leaves no ember.
   portal: { health: 90, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 0, ember: 2 },
-  duchess: { health: 6500, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+  duchess: { health: 6000, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
 }
 
 // The Briar Mass swallows every foe of the kinds in `eats` that it rolls over,
@@ -152,8 +152,8 @@ export const massRule = {
   eats: ['briarling'] as FoeKind[],
   cap: 12,
   pause: 0.5,
-  health: 25,
-  reach: 2.5,
+  health: 10,
+  reach: 2,
   slow: 2.5,
   biteEvery: 8,
 }
@@ -168,9 +168,9 @@ export const warderRule = { lives: 3, rest: 3, quicken: 0.3 }
 // at `flingSpeed` from where it stood. The fight is won when none is left.
 export const retinueRule = {
   tiers: [
-    { health: 900, speed: 62, reach: 38, ember: 8, shards: 3 },
-    { health: 220, speed: 90, reach: 26, ember: 3, shards: 6 },
-    { health: 40, speed: 124, reach: 16, ember: 1, shards: 0 },
+    { health: 1100, speed: 66, reach: 38, ember: 8, shards: 3 },
+    { health: 300, speed: 98, reach: 26, ember: 3, shards: 6 },
+    { health: 60, speed: 136, reach: 16, ember: 1, shards: 0 },
   ],
   fling: 0.3,
   flingSpeed: 260,
@@ -187,8 +187,8 @@ export const guardRule = {
   // How far the ring is kept from the walls.
   margin: 40,
   opening: 1.6,
-  turn: 0.65,
-  windup: 0.85,
+  turn: 0.5,
+  windup: 0.75,
   boltSpeed: 300,
   boltReach: 620,
 }
@@ -220,12 +220,12 @@ export const duelRule = {
   // Briar patches: one is marked under the hero and, from the second phase,
   // more beside it, `gap` pixels away: as many as the phase. Each erupts after
   // `windup` and then wounds anyone inside for `life` seconds.
-  patch: { every: 4.6, windup: 2, radius: 78, life: 6, gap: 150 },
+  patch: { every: 5.2, windup: 2, radius: 78, life: 6, gap: 150 },
   // The thorn storm: she stops, warns for `windup` seconds, then for `length`
   // seconds turns on the spot and every `beat` seconds looses `thorns` thorns
   // in all directions, the ring turned `twist` degrees each time. While it
   // lasts nothing can hurt her.
-  storm: { every: 14, windup: 1.6, length: 4.2, beat: 0.42, thorns: 10, twist: 13, speed: 250, reach: 900 },
+  storm: { every: 14, windup: 1.6, length: 4.2, beat: 0.42, thorns: 8, twist: 13, speed: 250, reach: 900 },
   // Four columns of the chapel stop any thorn or arrow that comes within
   // `radius` of them during the duel. A column falls after `hits` of them.
   pillars: [0, 1, 2, 3].map(index => ({
@@ -238,7 +238,7 @@ export const duelRule = {
   // seconds a gate sends out `pack` briarlings; from the second phase every
   // other time a boar comes too, and in the third a stone knight instead.
   // A gate sends nothing while `crowd` foes or more are in the court.
-  portal: { every: 9, max: 3, distance: 300, margin: 70, beat: 4, pack: 2, crowd: 45 },
+  portal: { every: 11, max: 3, distance: 300, margin: 70, beat: 5, pack: 2, crowd: 45 },
   // A new phase begins at each of these shares of her health; every phase
   // multiplies the time between her attacks by `tempo`.
   phases: [0.66, 0.33],

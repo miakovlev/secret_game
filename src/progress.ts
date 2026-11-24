@@ -31,10 +31,8 @@ export type Outcome = {
   // Seconds from the start of the run to its end.
   time: number
   kills: number
-  // The run lasted until the Duchess came.
-  reachedDuel: boolean
-  // At least one boss fell during the run.
-  felledBoss: boolean
+  // How many bosses fell during the run.
+  felled: number
 }
 
 export type Reward =
@@ -47,7 +45,7 @@ export function fresh(): Progress {
   return {
     version: saveVersion,
     difficulty: 1,
-    heroes: heroIds.filter(id => heroes[id].opens === 'start'),
+    heroes: heroIds.filter(id => heroes[id].opens === 0),
     variants: [],
     records: difficulties.map(() => ({ wins: 0, best: null, kills: 0 })),
     volume: 0.6,
@@ -136,9 +134,7 @@ export function settle(before: Progress, run: Outcome): { progress: Progress; re
     }
   }
   for (const id of heroIds) {
-    const earned =
-      (heroes[id].opens === 'duel' && run.reachedDuel) ||
-      (heroes[id].opens === 'boss' && run.felledBoss)
+    const earned = run.felled >= heroes[id].opens
     if (earned && !progress.heroes.includes(id)) {
       progress.heroes.push(id)
       rewards.push({ kind: 'hero', hero: id })

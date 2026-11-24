@@ -31,6 +31,10 @@ test('both catalogs have the same complete set of nonempty messages', () => {
   assert.equal(messages.ru.phaseLine(1), 'Достигнута фаза дуэли: 1 из 3.')
   assert.equal(messages.en.bossIn('Briar Mass'), 'Briar Mass IN')
   assert.equal(messages.ru.bossIn('Терновый ком'), 'Терновый ком ЧЕРЕЗ')
+  assert.equal(messages.en.lock(1), 'Locked. Fell any boss once.')
+  assert.equal(messages.en.lock(2), 'Locked. Fell 2 bosses in one run.')
+  assert.equal(messages.ru.lock(1), 'Закрыт. Победи любого босса.')
+  assert.equal(messages.ru.lock(2), 'Закрыт. Победи двух боссов за один забег.')
   assert.equal(messages.en.felledLine(2, 5), 'Bosses felled: 2 of 5.')
   assert.equal(messages.ru.felledLine(2, 5), 'Побеждено боссов: 2 из 5.')
   for (const [lang, name, relic] of [['en', 'Two Gates', 'Hourglass'], ['ru', 'Двое ворот', 'Песочные часы']]) {
