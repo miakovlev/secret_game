@@ -129,15 +129,30 @@ export const foes: Record<FoeKind, FoeStats> = {
   knight: { health: 80, healthGrowth: 0.1, speed: 58, speedSpread: 6, speedGrowth: 0.02, reach: 26, ember: 6 },
   // A healer moth: frail, hangs back and mends the most wounded foe near it.
   moth: { health: 12, healthGrowth: 0.02, speed: 105, speedSpread: 10, speedGrowth: 0, reach: 16, ember: 4 },
-  // The four bosses before the Duchess. Until each gets its own way of
-  // fighting they are plain, very tough pursuers.
-  mass: { health: 420, healthGrowth: 0, speed: 72, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
+  // The Briar Mass rolls after the warden and swallows briarlings (see massRule).
+  // The three bosses after it are plain, very tough pursuers until each gets
+  // its own way of fighting.
+  mass: { health: 340, healthGrowth: 0, speed: 72, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
   sentinel: { health: 900, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
   retinue: { health: 1500, healthGrowth: 0, speed: 66, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 16 },
   guard: { health: 2200, healthGrowth: 0, speed: 74, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 18 },
   // The seal-flower is rooted; the Duchess walks at her own pace (see duelRule). Neither leaves embers.
   seal: { health: 140, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
   duchess: { health: 1700, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+}
+
+// The Briar Mass swallows every foe of the kinds in `eats` that it rolls over,
+// one per `pause` seconds and `cap` at most. Each one adds `health` and
+// `reach` and takes `slow` off its speed, so a grown mass can be walked
+// around; every `biteEvery` swallowed its touch takes one more pip of armor.
+export const massRule = {
+  eats: ['briarling'] as FoeKind[],
+  cap: 12,
+  pause: 0.5,
+  health: 25,
+  reach: 2.5,
+  slow: 2.5,
+  biteEvery: 8,
 }
 
 // Felling a boss blesses one learned spell.

@@ -480,6 +480,35 @@ export function mothTexture() {
   })
 }
 
+// The Briar Mass: a rolling ball of briarlings knotted together, eyes and
+// thorns pointing every way. The scene spins it and scales it as it grows.
+export function massTexture() {
+  return texture(104, 104, p => {
+    p.translate(52, 52)
+    circle(p, 0, 0, 40, '#17131c')
+    for (let i = 0; i < 14; i++) {
+      const turn = (i / 14) * Math.PI * 2
+      const x = Math.cos(turn), y = Math.sin(turn)
+      polygon(p, [[x*30 - y*5, y*30 + x*5], [x*46, y*46], [x*30 + y*5, y*30 - x*5]], i % 2 ? '#925e58' : '#63394a')
+    }
+    circle(p, 0, 0, 34, '#5a3344')
+    // Limbs of the swallowed, wound around the ball.
+    for (let i = 0; i < 7; i++) {
+      const turn = (i / 7) * Math.PI * 2 + 0.3
+      p.save()
+      p.rotate(turn)
+      polygon(p, [[6,-4],[30,-9],[33,-2],[12,4]], '#835954')
+      polygon(p, [[10,-3],[26,-6],[27,-2],[13,1]], '#be8265')
+      p.restore()
+    }
+    circle(p, 0, 0, 13, '#3a2230')
+    for (const [x, y] of [[-16,-12],[14,-17],[20,8],[-6,20],[-22,6],[4,-2]]) {
+      circle(p, x, y, 2.2, '#ffbf85')
+      circle(p, x + 5, y + 2, 2.2, '#ffbf85')
+    }
+  })
+}
+
 // A boss before it gets a look of its own: a stooped giant of roots, told
 // from the others by the colour of its growth and eyes.
 export function bossTexture(growth: string, eyes: string) {

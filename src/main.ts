@@ -7,7 +7,7 @@ import {
 import type { BossId, HeroId, RelicId, SpellId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture,
-  bossTexture, heroTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
+  bossTexture, heroTexture, massTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -119,8 +119,6 @@ class Arena extends Phaser.Scene {
   private stood = { x: 0, y: 0 }
   private marked = 0
   private healthBefore = new WeakMap<Foe, number>()
-  // The health each boss came with, to show what is left of it.
-  private bossHealth = new WeakMap<Foe, number>()
   private struckAt = new WeakMap<Foe, number>()
   private settled?: Battle
   private battle = new Battle()
@@ -155,7 +153,7 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('marked', markedTexture())
     this.textures.addCanvas('knight', knightTexture())
     this.textures.addCanvas('moth', mothTexture())
-    this.textures.addCanvas('mass', bossTexture('#5a3344', '#ff9d6b'))
+    this.textures.addCanvas('mass', massTexture())
     this.textures.addCanvas('sentinel', bossTexture('#3f4a78', '#bfe3ff'))
     this.textures.addCanvas('retinue', bossTexture('#6f7078', '#f4f1e6'))
     this.textures.addCanvas('guard', bossTexture('#8a5a2a', '#ffe08a'))
@@ -377,11 +375,11 @@ class Arena extends Phaser.Scene {
         const cue = ({
           shot: 'shot', kill: 'kill', pickup: 'pickup', level: 'level', heal: 'heal', open: 'chest',
           slash: 'slash', toll: 'toll', burst: 'burst', arrow: 'arrow', lash: 'lash', duel: 'bell', volley: 'arrow', erupt: 'burst',
-          boss: 'bell', felled: 'chest', summon: 'rise', crown: 'crown', phase: 'lash',
+          boss: 'bell', felled: 'chest', summon: 'rise', absorb: 'rise', crown: 'crown', phase: 'lash',
         } as Partial<Record<BattleEvent['type'], Cue>>)[event.type]
         if (cue) this.sfx.play(cue)
         const span = {
-          kill: 0.3, level: 0.6, pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, erupt: 0.35, phase: 0.9, bloom: 0.22, summon: 0.5, felled: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          kill: 0.3, level: 0.6, pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, erupt: 0.35, phase: 0.9, bloom: 0.22, summon: 0.5, felled: 0.8, absorb: 0.35, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
@@ -447,7 +445,7 @@ class Arena extends Phaser.Scene {
       const since = b.elapsed - (this.struckAt.get(foe) ?? -1)
       if (since < 0.09) {
         w.fillStyle(0xffffff, 0.55 * (1 - since / 0.09))
-        w.fillCircle(foe.x, foe.y, foes[foe.kind].reach + 4)
+        w.fillCircle(foe.x, foe.y, b.reach(foe) + 4)
       }
       const rooted = foe.kind === 'seal' || foe.kind === 'duchess'
       const locked = foe.mode !== 'chase' && foe.mode !== 'rest'
@@ -457,10 +455,14 @@ class Arena extends Phaser.Scene {
         .setRotation(
           rooted
             ? 0
-            : locked
+            : foe.kind === 'mass'
+              // The mass rolls, and faster while it is small.
+              ? b.elapsed * foe.speed / 24
+              : locked
               ? Math.atan2(foe.dir.y, foe.dir.x)
               : Math.atan2(b.player.y - foe.y, b.player.x - foe.x),
         )
+        .setScale(b.reach(foe) / foes[foe.kind].reach)
       if (rooted) {
         // A health bar under each rooted thing; the seal is tied to the crown.
         const span = foe.kind === 'seal' ? 44 : 96
@@ -692,6 +694,12 @@ class Arena extends Phaser.Scene {
       } else if (event.type === 'phase' && lady) {
         g.lineStyle(6, 0xff5a7d, fade)
         g.strokeCircle(lady.x, lady.y, 60 + (1 - fade) * 260)
+      } else if (event.type === 'absorb') {
+        // A briarling dragged into the Briar Mass.
+        g.lineStyle(4, 0xbe8265, 0.9 * fade)
+        g.lineBetween(event.from.x, event.from.y, event.to.x, event.to.y)
+        g.lineStyle(3, 0xff9d6b, fade)
+        g.strokeCircle(event.to.x, event.to.y, 40 + (1 - fade) * 40)
       } else if (event.type === 'mend') {
         // The golden thread from a moth to the foe it mends.
         g.lineStyle(2.5, 0xffe08a, 0.8 * fade)
@@ -740,7 +748,7 @@ class Arena extends Phaser.Scene {
     // A pale ring marks the boss among the crowd.
     if (lord) {
       g.lineStyle(2, 0xf4f1e6, 0.35 + 0.3 * pulse)
-      g.strokeCircle(lord.x, lord.y, foes[lord.kind].reach + 10)
+      g.strokeCircle(lord.x, lord.y, b.reach(lord) + 10)
     }
     // First-run tips, remembered in the save as soon as each is learned.
     const copy = messages[language]
@@ -761,7 +769,9 @@ class Arena extends Phaser.Scene {
       this.progress = { ...this.progress, tips: tipIds.filter(id => this.tutor.seen.has(id)) }
       store(this.progress)
     }
-    const trial = b.phase === 'playing' && lord ? copy.bossHint(copy.bosses[lord.kind as BossId]) : ''
+    const trial = b.phase === 'playing' && lord
+      ? lord.kind === 'mass' ? copy.massHint : copy.bossHint(copy.bosses[lord.kind as BossId])
+      : ''
     const duel = b.phase === 'playing' && lady ? (b.shielded ? copy.duel.seal : copy.duel.open) : ''
     const tip = lesson ? copy.tips[lesson] : trial || duel
     if (hint.textContent !== tip) hint.textContent = tip
@@ -769,11 +779,10 @@ class Arena extends Phaser.Scene {
     // The clock counts down to the next boss; while a boss lives it shows the
     // boss's health instead.
     const next = b.nextBoss
-    if (lord && !this.bossHealth.has(lord)) this.bossHealth.set(lord, lord.health)
     const timer = lady
       ? Math.ceil((100 * Math.max(0, lady.health)) / foes.duchess.health) + '%'
       : lord
-        ? Math.ceil((100 * Math.max(0, lord.health)) / this.bossHealth.get(lord)!) + '%'
+        ? Math.ceil((100 * Math.max(0, lord.health)) / lord.full) + '%'
         : next && b.stage === 'court'
           ? timeText(Math.ceil(next.inSeconds))
           : '0%'

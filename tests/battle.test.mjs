@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bossIds, bossRule, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
+import { bossIds, bossRule, massRule, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
   relics, seedRule, oil, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
@@ -2214,4 +2214,145 @@ test('the Duchess is the fifth boss: she comes when her turn is due and felling 
   assert.equal(won.felled, 5)
   assert.equal(new Battle().felled, 0)
   assert.equal(new Battle().bossIndex, 0)
+})
+
+// --- Step 5.2: the Briar Mass.
+
+// A still court with the Briar Mass standing far from the warden, and no waves.
+function rolling(grown = 0) {
+  const b = playing(() => 0.5)
+  b.spells.witchfire.range = 0
+  b.schedule.splice(0)
+  b.calm = -1e9
+  const mass = makeFoe('mass', b.player.x + 400, b.player.y, 0, foes.mass.health)
+  for (let i = 0; i < grown; i++) {
+    mass.grown++
+    mass.health += massRule.health
+    mass.full += massRule.health
+  }
+  b.foes = [mass]
+  return { b, mass }
+}
+
+test('the Briar Mass swallows a briarling it rolls over, but nothing bigger', () => {
+  const { b, mass } = rolling()
+  const near = kind => makeFoe(kind, mass.x + 10, mass.y, 0, 50)
+  const others = ['boar', 'knight', 'marked', 'archer', 'moth'].map(near)
+  // A briarling just beyond its reach is safe; one inside is swallowed.
+  const far = makeFoe('briarling', mass.x - foes.mass.reach - 2, mass.y, 0, 50)
+  b.foes.push(...others, far)
+  for (const foe of others) foe.timer = 1e9
+  assert.deepEqual(b.step(0, 0, 0), [])
+  assert.equal(mass.grown, 0)
+  far.x += 4
+  const events = b.step(0, 0, 0)
+  assert.deepEqual(events, [{ type: 'absorb', from: { x: far.x, y: far.y }, to: { x: mass.x, y: mass.y } }])
+  assert.deepEqual(b.foes, [mass, ...others])
+  // The swallowed foe is not banished: no ember, no kill.
+  assert.deepEqual(b.embers, [])
+  assert.equal(b.kills, 0)
+  assert.deepEqual(massRule.eats, ['briarling'])
+  // Any other foe that touches a briarling leaves it alone.
+  const plain = rolling()
+  plain.b.foes = [makeFoe('knight', 300, 300, 0, 50), makeFoe('briarling', 300, 300, 0, 50)]
+  plain.b.step(0, 0, 0)
+  assert.equal(plain.b.foes.length, 2)
+})
+
+test('each swallowed briarling changes the size, health, speed and bite of the Briar Mass once', () => {
+  const { b, mass } = rolling()
+  mass.speed = foes.mass.speed
+  mass.health = 100
+  const state = () => [mass.grown, b.reach(mass), mass.health, mass.full, mass.speed, b.bite(mass)]
+  assert.deepEqual(state(), [0, foes.mass.reach, 100, foes.mass.health, foes.mass.speed, 1])
+  const feed = () => b.foes.push(makeFoe('briarling', mass.x, mass.y, 0, 1), makeFoe('briarling', mass.x, mass.y, 0, 1))
+  feed()
+  b.step(0, 0, 0)
+  const once = [1, foes.mass.reach + massRule.reach, 100 + massRule.health, foes.mass.health + massRule.health, foes.mass.speed - massRule.slow, 1]
+  assert.deepEqual(state(), once)
+  assert.equal(b.foes.length, 2)
+  // The second waits for the mass to finish the first.
+  b.step(0, 0, 0)
+  assert.deepEqual(state(), once)
+  for (let i = 0; i < Math.round(massRule.pause * 60) - 1; i++) b.step(1 / 60, 0, 0)
+  assert.equal(mass.grown, 1)
+  mass.x = b.player.x + 400
+  b.foes[1].x = mass.x
+  b.step(2 / 60, 0, 0)
+  assert.equal(mass.grown, 2)
+  assert.equal(b.foes.length, 1)
+
+  // Its touch takes one more pip for every `biteEvery` swallowed.
+  for (const [grown, bite] of [[0, 1], [massRule.biteEvery - 1, 1], [massRule.biteEvery, 2], [massRule.cap, 1 + Math.floor(massRule.cap / massRule.biteEvery)]]) {
+    const { b, mass } = rolling(grown)
+    assert.equal(b.bite(mass), bite)
+    // It reaches the warden from as far as it has grown.
+    mass.x = b.player.x + b.reach(mass) + 1
+    b.step(0, 0, 0)
+    assert.equal(b.armor, MAX_ARMOR)
+    mass.x -= 2
+    b.step(0, 0, 0)
+    assert.equal(b.armor, MAX_ARMOR - bite)
+    // The moment of mercy holds against the next touch.
+    b.step(0.1, 0, 0)
+    assert.equal(b.armor, MAX_ARMOR - bite)
+    assert.equal(b.phase, 'playing')
+  }
+  // A bite deeper than the armor left ends the run at nothing, not below.
+  const last = rolling(massRule.cap)
+  last.b.armor = 1
+  Object.assign(last.mass, last.b.player)
+  last.b.step(0, 0, 0)
+  assert.equal(last.b.armor, 0)
+  assert.equal(last.b.phase, 'lost')
+  // Ordinary foes still take one pip.
+  assert.equal(b.bite(makeFoe('knight', 0, 0, 0, 1)), 1)
+  assert.equal(b.reach(makeFoe('knight', 0, 0, 0, 1)), foes.knight.reach)
+})
+
+test('the Briar Mass stops growing at its cap, and does not grow in an empty court', () => {
+  const { b, mass } = rolling()
+  mass.speed = foes.mass.speed
+  for (let i = 0; i < 30 * 60; i++) {
+    if (b.foes.length < 4) b.foes.push(makeFoe('briarling', mass.x, mass.y, 0, 1))
+    mass.x = b.player.x + 400
+    b.step(1 / 60, 0, 0)
+  }
+  assert.equal(mass.grown, massRule.cap)
+  assert.equal(b.reach(mass), foes.mass.reach + massRule.cap * massRule.reach)
+  assert.equal(mass.full, foes.mass.health + massRule.cap * massRule.health)
+  assert.equal(mass.speed, foes.mass.speed - massRule.cap * massRule.slow)
+  // Grown, it is slow enough to walk around, and still moves.
+  assert.ok(mass.speed > 0 && mass.speed < Math.min(...heroIds.map(id => heroes[id].speed)) / 3)
+  assert.equal(b.bite(mass), 2)
+  assert.ok(b.bite(mass) < MAX_ARMOR)
+  // Briarlings lying on it are left alone now.
+  assert.ok(b.foes.filter(foe => foe.kind === 'briarling').length >= 3)
+
+  const empty = rolling()
+  empty.mass.speed = foes.mass.speed
+  const events = []
+  for (let i = 0; i < 20 * 60; i++) {
+    events.push(...empty.b.step(1 / 60, 0, 0))
+    empty.mass.x = Math.max(empty.mass.x, empty.b.player.x + 200)
+  }
+  assert.deepEqual(events, [])
+  assert.deepEqual([empty.mass.grown, empty.mass.health, empty.mass.speed], [0, foes.mass.health, foes.mass.speed])
+  assert.equal(empty.b.foes.length, 1)
+})
+
+test('the third minute brings the Briar Mass among the wave, and it feeds on it', () => {
+  const b = before(0, seeded(4))
+  const events = []
+  for (let i = 0; i < 40 * 30 && (b.boss?.grown ?? 0) < 3; i++) events.push(...b.step(1 / 30, 0, 0))
+  assert.equal(b.boss.kind, 'mass')
+  assert.equal(b.boss.grown, 3)
+  assert.equal(events.filter(event => event.type === 'absorb').length, 3)
+  assert.equal(b.boss.full, foes.mass.health + 3 * massRule.health)
+  // Felling a grown mass is felling the boss all the same.
+  b.boss.health = 0.1
+  b.spells.witchfire.range = 4000
+  b.timers.witchfire = 0
+  b.foes = [b.boss]
+  assert.ok(b.step(1 / 30, 0, 0).some(event => event.type === 'felled' && event.boss === 'mass'))
 })

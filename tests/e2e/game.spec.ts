@@ -378,10 +378,10 @@ test('a boss comes on its minute, and felling it blesses one spell', async ({ pa
   expect(await state()).toMatchObject({ boss: 'mass', calm: 0 })
   await expect(label).toHaveText('BRIAR MASS')
   await expect(clock).toHaveText('100%')
-  await expect(hint).toHaveText('Briar Mass is in the court. Fell it to earn a blessing: the arrow points to it.')
+  await expect(hint).toHaveText('The Briar Mass swallows the briarlings it rolls over and grows. Banish them first and strike it while it is small.')
   await select(page, 'ru')
   await expect(label).toHaveText('ТЕРНОВЫЙ КОМ')
-  await expect(hint).toHaveText(/Терновый ком во дворе\. Победи его и получи благословение/)
+  await expect(hint).toHaveText(/Терновый ком глотает корневиков.*бей ком, пока он мал/)
   await select(page, 'en')
 
   // While it lives the waves go on, and the count to the next boss stands still.
@@ -389,9 +389,23 @@ test('a boss comes on its minute, and felling it blesses one spell', async ({ pa
   await page.clock.runFor(3000)
   expect((await state()).elapsed).toBeGreaterThan(before)
   expect(await state()).toMatchObject({ boss: 'mass', calm: 0 })
+  // A briarling it rolls over is swallowed: the mass grows and leaves no ember for it.
+  const grown = await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    const mass = battle.boss
+    const before = { grown: mass.grown, reach: battle.reach(mass), full: mass.full }
+    battle.foes = [mass, { ...mass, kind: 'briarling', health: 5, full: 5, grown: 0 }]
+    battle.embers = []
+    for (let i = 0; i < 3 && mass.grown === before.grown; i++) battle.step(1 / 60, 0, 0)
+    return {
+      meals: mass.grown - before.grown, wider: battle.reach(mass) > before.reach, tougher: mass.full > before.full,
+      left: battle.foes.length, embers: battle.embers.length,
+    }
+  })
+  expect(grown).toEqual({ meals: 1, wider: true, tougher: true, left: 1, embers: 0 })
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    battle.boss.health /= 2
+    battle.boss.health = battle.boss.full / 2
   })
   await page.clock.runFor(100)
   await expect(clock).toHaveText(/^(4\d|50)%$/)

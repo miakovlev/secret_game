@@ -1,5 +1,5 @@
 import {
-  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, mothHeal, oil, relicIds,
+  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, massRule, mothHeal, oil, relicIds,
   relicRule,
   relics, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
@@ -25,6 +25,8 @@ export type Foe = Point & {
   shots: number
   // Seconds until a firefly spirit may sting this foe again.
   stung: number
+  // How many foes the Briar Mass has swallowed.
+  grown: number
 }
 export type Arrow = Point & { vx: number; vy: number; life: number }
 export type Seed = Point & { life: number }
@@ -41,6 +43,7 @@ export type BattleEvent =
   | { type: 'chest'; at: Point }
   | { type: 'boss'; boss: BossId }
   | { type: 'felled'; boss: BossId; at: Point }
+  | ({ type: 'absorb' } & Shot)
   | { type: 'summon'; at: Point }
   | { type: 'bloom'; at: Point; radius: number }
   | { type: 'open'; at: Point }
@@ -76,7 +79,7 @@ export function xpGoal(level: number) {
 }
 
 export function makeFoe(kind: FoeKind, x: number, y: number, speed: number, health: number): Foe {
-  return { kind, x, y, speed, health, full: health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0 }
+  return { kind, x, y, speed, health, full: health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0, grown: 0 }
 }
 
 // How many times the wave's group has been due by the given second of the run.
@@ -213,9 +216,9 @@ export class Battle {
   }
 
   // Thorns, tusks and arrows all take one pip, with a moment of mercy after.
-  private wound() {
+  private wound(pips = 1) {
     if (this.immunity > 0) return
-    this.armor--
+    this.armor = Math.max(0, this.armor - pips)
     this.immunity = 1.25
     if (this.armor === 0) this.phase = 'lost'
   }
@@ -598,6 +601,35 @@ export class Battle {
     return this.foes.filter(foe => foe.kind !== 'duchess' || !guarded)
   }
 
+  // How close a foe must be to wound the warden. The Briar Mass grows.
+  reach(foe: Foe) {
+    return foes[foe.kind].reach + foe.grown * massRule.reach
+  }
+
+  // How many pips of armor a foe's touch takes.
+  bite(foe: Foe) {
+    return 1 + Math.floor(foe.grown / massRule.biteEvery)
+  }
+
+  // The Briar Mass swallows a small foe it has rolled over: the foe is gone
+  // without an ember, and the mass grows tougher, wider and slower.
+  private feed(events: BattleEvent[]) {
+    const mass = this.foes.find(foe => foe.kind === 'mass')
+    if (!mass || mass.timer > 0 || mass.grown >= massRule.cap) return
+    const reach = this.reach(mass)
+    const meal = this.foes.find(
+      foe => massRule.eats.includes(foe.kind) && Math.hypot(foe.x - mass.x, foe.y - mass.y) < reach,
+    )
+    if (!meal) return
+    this.foes.splice(this.foes.indexOf(meal), 1)
+    mass.grown++
+    mass.health += massRule.health
+    mass.full += massRule.health
+    mass.speed -= massRule.slow
+    mass.timer = massRule.pause
+    events.push({ type: 'absorb', from: { x: meal.x, y: meal.y }, to: { x: mass.x, y: mass.y } })
+  }
+
   private isBoss(foe: Foe) {
     return (bossIds as readonly string[]).includes(foe.kind)
   }
@@ -890,8 +922,9 @@ export class Battle {
         foe.y += toward.y * travel
       }
       const remaining = Math.hypot(this.player.x - foe.x, this.player.y - foe.y)
-      if (remaining < foes[foe.kind].reach) this.wound()
+      if (remaining < this.reach(foe)) this.wound(this.bite(foe))
     }
+    this.feed(events)
     this.arrows = this.arrows.filter(arrow => {
       arrow.x += arrow.vx * dt
       arrow.y += arrow.vy * dt
