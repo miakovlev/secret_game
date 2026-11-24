@@ -530,6 +530,29 @@ export function warderTexture() {
   })
 }
 
+// A guardian of the Stone Retinue: a cracked granite statue with a glowing
+// seam. The same picture serves every generation, scaled down by the scene.
+export function retinueTexture() {
+  return texture(104, 104, p => {
+    p.translate(52, 52)
+    circle(p, -3, 4, 42, '#17131c')
+    polygon(p, [[-34,-18],[-16,-36],[10,-36],[32,-20],[38,2],[30,24],[8,36],[-18,34],[-36,14]], '#55505a')
+    polygon(p, [[-27,-14],[-13,-28],[8,-28],[25,-16],[30,2],[24,18],[6,28],[-14,27],[-28,11]], '#7b7580')
+    polygon(p, [[-18,-10],[-8,-20],[6,-20],[17,-11],[20,2],[15,12],[3,19],[-10,18],[-19,7]], '#a39da6')
+    // The seam along which it will break.
+    p.strokeStyle = '#ffd27a'
+    p.lineWidth = 3
+    p.beginPath()
+    p.moveTo(-30, -6); p.lineTo(-12, 2); p.lineTo(-4, -10); p.lineTo(8, 4); p.lineTo(4, 18); p.lineTo(14, 30)
+    p.moveTo(8, 4); p.lineTo(22, -2); p.lineTo(34, 6)
+    p.stroke()
+    box(p, 18, -9, 8, 5, '#2a2530')
+    box(p, 18, 5, 8, 5, '#2a2530')
+    circle(p, 23, -6.5, 1.8, '#ffd27a')
+    circle(p, 23, 7.5, 1.8, '#ffd27a')
+  })
+}
+
 // A boss before it gets a look of its own: a stooped giant of roots, told
 // from the others by the colour of its growth and eyes.
 export function bossTexture(growth: string, eyes: string) {

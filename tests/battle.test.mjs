@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bossIds, bossRule, massRule, warderRule, spellIds, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
+import { bossIds, bossRule, massRule, retinueRule, warderRule, spellIds, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
   relics, seedRule, oil, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
@@ -2131,7 +2131,7 @@ test('a felled boss blesses one learned spell, and leaves a reliquary when none 
     learn(b, 'toll')
     b.timers.toll = 9
     Object.assign(b.blessed, blessed)
-    const boss = makeFoe('retinue', b.player.x + 80, b.player.y, 0, 0.1)
+    const boss = makeFoe('guard', b.player.x + 80, b.player.y, 0, 0.1)
     b.foes = [boss]
     b.spells.witchfire.range = 2000
     const events = b.step(0, 0, 0)
@@ -2141,7 +2141,7 @@ test('a felled boss blesses one learned spell, and leaves a reliquary when none 
   assert.deepEqual(first.events.map(event => event.type), ['shot', 'kill', 'felled'])
   assert.equal(first.b.boons, 1)
   assert.deepEqual(first.b.reliquaries, [])
-  assert.equal(first.b.embers.at(-1).value, foes.retinue.ember)
+  assert.equal(first.b.embers.at(-1).value, foes.guard.ember)
   // The blessing is offered on the next step, one card per learned spell.
   first.b.embers = []
   first.b.spells.witchfire.range = 0
@@ -2488,4 +2488,202 @@ test('the sixth minute brings the Sleepless Warder, and the count to the next bo
   until(b, 'none', 60)
   assert.ok(b.calm > 0)
   assert.deepEqual(b.nextBoss.boss, 'retinue')
+})
+
+// --- Step 5.4: the Stone Retinue.
+
+// A still court with the great guardian beside the warden, no waves, and a spell that fells at a touch.
+function quarry(random = () => 0.5) {
+  const b = playing(random)
+  b.schedule.splice(0)
+  b.calm = -1e9
+  b.immunity = 1e9
+  const great = makeFoe('retinue', b.player.x + 120, b.player.y, 0, foes.retinue.health)
+  b.foes = [great]
+  Object.assign(b.spells.witchfire, { range: 4000, damage: 1e6, cooldown: 0.01 })
+  b.timers.witchfire = 0
+  return { b, great }
+}
+const shards = (b, tier) => b.foes.filter(foe => foe.kind === 'retinue' && (tier === undefined || foe.tier === tier))
+
+test('the great guardian breaks into exactly three, and each of those into exactly six', () => {
+  const [great, middle, small] = retinueRule.tiers
+  assert.deepEqual(retinueRule.tiers.map(tier => tier.shards), [3, 6, 0])
+  assert.deepEqual([foes.retinue.health, foes.retinue.speed, foes.retinue.reach], [great.health, great.speed, great.reach])
+  // The smaller, the quicker; the smaller, the frailer and the shorter its reach.
+  assert.ok(great.speed < middle.speed && middle.speed < small.speed)
+  assert.ok(small.speed < Math.min(...heroIds.map(id => heroes[id].speed)))
+  assert.ok(great.health > middle.health && middle.health > small.health)
+  assert.ok(great.reach > middle.reach && middle.reach > small.reach)
+
+  const { b, great: first } = quarry()
+  const at = { x: first.x, y: first.y }
+  const events = b.step(0, 0, 0)
+  assert.deepEqual(events.filter(event => event.type !== 'shot'), [
+    { type: 'kill', at }, { type: 'split', at, tier: 0, shards: 3 },
+  ])
+  assert.equal(shards(b).length, 3)
+  for (const shard of shards(b)) {
+    assert.deepEqual([shard.tier, shard.health, shard.full, shard.speed, shard.mode], [1, middle.health, middle.health, middle.speed, 'fling'])
+    assert.deepEqual([shard.x, shard.y], [at.x, at.y])
+    assert.equal(b.reach(shard), middle.reach)
+  }
+  // They are thrown apart in a ring, then give chase.
+  b.spells.witchfire.range = 0
+  for (let i = 0; i < Math.round(retinueRule.fling * 60) + 2; i++) b.step(1 / 60, 0, 0)
+  const thrown = retinueRule.fling * retinueRule.flingSpeed
+  const turns = shards(b).map(shard => {
+    assert.equal(shard.mode, 'chase')
+    assert.ok(Math.hypot(shard.x - at.x, shard.y - at.y) > thrown - 12)
+    return Math.atan2(shard.y - at.y, shard.x - at.x)
+  })
+  assert.ok(Math.abs(Math.cos(turns[1] - turns[0]) + 0.5) < 0.2)
+  assert.ok(Math.abs(Math.cos(turns[2] - turns[1]) + 0.5) < 0.2)
+  // Not felled, no blessing; the count to the next boss still stands.
+  assert.deepEqual([b.felled, b.boons, b.kills], [0, 0, 1])
+  assert.equal(b.boss.kind, 'retinue')
+
+  // One middle shard gives six small ones, each of which leaves nothing behind.
+  const one = shards(b, 1)[0]
+  b.foes = [one]
+  one.speed = 0
+  b.spells.witchfire.range = 4000
+  b.timers.witchfire = 0
+  const second = b.step(0, 0, 0)
+  assert.deepEqual(second.filter(event => event.type === 'split'), [{ type: 'split', at: { x: one.x, y: one.y }, tier: 1, shards: 6 }])
+  assert.equal(shards(b, 2).length, 6)
+  assert.equal(shards(b).length, 6)
+  for (const shard of shards(b)) assert.deepEqual([shard.health, shard.speed, b.reach(shard)], [small.health, small.speed, small.reach])
+  const before = b.foes.length
+  b.foes[0].health = 0.1
+  b.spells.witchfire.damage = 1
+  b.timers.witchfire = 0
+  // The nearest is not necessarily the wounded one, so fell whichever is struck.
+  for (const shard of shards(b)) shard.health = 0.1
+  const third = b.step(1 / 60, 0, 0)
+  assert.deepEqual(third.filter(event => event.type === 'split'), [])
+  // The warden's third spark may leap to a second shard.
+  assert.ok(b.foes.length < before && b.foes.length >= before - 2)
+})
+
+test('the whole Stone Retinue is eighteen small shards, and only the last one fells the boss', () => {
+  const { b } = quarry(seeded(3))
+  const seen = { kill: 0, split: 0, felled: 0, small: 0 }
+  let most = 0
+  for (let i = 0; i < 4000 && !seen.felled; i++) {
+    if (b.phase === 'choosing') { assert.equal(seen.felled, 0); b.choose(0); continue }
+    // Until the step that ends it, nothing is felled and no blessing is owed.
+    assert.deepEqual([b.felled, b.boons], [0, 0])
+    const events = b.step(1 / 60, 0, 0)
+    for (const event of events) if (event.type in seen) seen[event.type]++
+    if (seen.felled) {
+      assert.equal(events.at(-1).type, 'felled')
+      assert.equal(shards(b).length, 0)
+    }
+    most = Math.max(most, shards(b).length)
+  }
+  // 1 great + 3 middle + 18 small banished; 1 + 3 of them broke apart.
+  assert.deepEqual(seen, { kill: 22, split: 4, felled: 1, small: 0 })
+  assert.deepEqual([b.kills, b.felled, b.boons], [22, 1, 1])
+  assert.equal(b.boss, undefined)
+  assert.ok(most <= 18)
+  // Embers: one for each of the twenty-two, by generation.
+  const [great, middle, small] = retinueRule.tiers
+  const total = b.embers.reduce((sum, ember) => sum + ember.value, 0) + b.xp
+  assert.ok(total >= 0)
+  assert.equal(great.ember > middle.ember && middle.ember > small.ember, true)
+})
+
+test('a blow that fells several shards at once leaves the right number of the next', () => {
+  // The toll strikes all three middle shards in the same cast.
+  const b = hero('ringer')
+  b.schedule.splice(0)
+  b.calm = -1e9
+  b.immunity = 1e9
+  const three = [0, 1, 2].map(i => {
+    const shard = makeFoe('retinue', b.player.x + 40 + i * 10, b.player.y, 0, 1)
+    shard.tier = 1
+    return shard
+  })
+  b.foes = [...three]
+  const events = b.step(0, 0, 0)
+  assert.equal(events.filter(event => event.type === 'kill').length, 3)
+  assert.equal(events.filter(event => event.type === 'split').length, 3)
+  assert.equal(events.filter(event => event.type === 'felled').length, 0)
+  assert.equal(shards(b, 2).length, 18)
+  assert.equal(shards(b).length, 18)
+  // The newborn shards were not struck by the blow that made them.
+  for (const shard of shards(b)) assert.equal(shard.health, shard.full)
+  // The same blow on the last two small shards fells the boss once.
+  b.foes = b.foes.slice(0, 2)
+  for (const shard of b.foes) Object.assign(shard, { x: b.player.x + 30, y: b.player.y, mode: 'chase', speed: 0, health: 0.1 })
+  b.timers.toll = 0
+  const last = b.step(0, 0, 0)
+  assert.equal(last.filter(event => event.type === 'kill').length, 2)
+  assert.deepEqual(last.filter(event => event.type === 'felled').map(event => event.boss), ['retinue'])
+  assert.deepEqual([b.felled, b.boons], [1, 1])
+})
+
+test('the health shown for the Stone Retinue counts every shard still to come', () => {
+  const { b, great } = quarry()
+  assert.equal(new Battle().bossLeft, 0)
+  assert.equal(b.bossLeft, 1)
+  const [g, m, s] = retinueRule.tiers
+  const whole = g.health + 3 * m.health + 18 * s.health
+  great.health = g.health / 2
+  assert.ok(Math.abs(b.bossLeft - (whole - g.health / 2) / whole) < 1e-9)
+  b.step(0, 0, 0)
+  assert.ok(Math.abs(b.bossLeft - (3 * m.health + 18 * s.health) / whole) < 1e-9)
+  b.foes = shards(b).slice(0, 1)
+  assert.ok(Math.abs(b.bossLeft - (m.health + 6 * s.health) / whole) < 1e-9)
+  b.foes[0].tier = 2
+  b.foes[0].health = s.health / 2
+  assert.ok(Math.abs(b.bossLeft - s.health / 2 / whole) < 1e-9)
+  // Any other boss is simply its own health.
+  const warder = makeFoe('sentinel', 0, 0, 0, 200)
+  warder.health = 50
+  b.foes = [warder]
+  assert.equal(b.bossLeft, 0.25)
+  warder.health = -5
+  assert.equal(b.bossLeft, 0)
+
+  // On a harder difficulty the shards are tougher by the same measure as the guardian.
+  const hard = new Battle(() => 0.5, 'warden', 2)
+  hard.phase = 'playing'
+  hard.schedule.splice(0)
+  hard.bossIndex = 2
+  hard.calm = bossRule.every
+  hard.spells.witchfire.range = 0
+  hard.step(1 / 60, 0, 0)
+  const tough = difficulties[1].toughness
+  assert.equal(hard.boss.full, g.health * tough)
+  assert.equal(hard.bossLeft, 1)
+  Object.assign(hard.spells.witchfire, { range: 4000, damage: 1e6 })
+  hard.timers.witchfire = 0
+  hard.immunity = 1e9
+  hard.step(0, 0, 0)
+  assert.equal(shards(hard, 1).length, 3)
+  for (const shard of shards(hard)) assert.equal(shard.full, m.health * tough)
+  assert.ok(Math.abs(hard.bossLeft - (3 * m.health + 18 * s.health) / whole) < 1e-9)
+})
+
+test('a shard thrown toward a wall stays inside the court', () => {
+  const { b, great } = quarry()
+  Object.assign(b.player, { x: 60, y: 60 })
+  Object.assign(great, { x: 24, y: 24 })
+  b.step(0, 0, 0)
+  b.spells.witchfire.range = 0
+  for (let i = 0; i < 40; i++) b.step(1 / 60, 0, 0)
+  for (const shard of shards(b)) {
+    assert.ok(shard.x >= 22 && shard.y >= 22 && shard.x <= court.width - 22 && shard.y <= court.height - 22)
+  }
+  const far = quarry()
+  Object.assign(far.b.player, { x: court.width - 60, y: court.height - 60 })
+  Object.assign(far.great, { x: court.width - 24, y: court.height - 24 })
+  far.b.step(0, 0, 0)
+  far.b.spells.witchfire.range = 0
+  for (let i = 0; i < 40; i++) far.b.step(1 / 60, 0, 0)
+  for (const shard of shards(far.b)) {
+    assert.ok(shard.x <= court.width - 22 && shard.y <= court.height - 22)
+  }
 })

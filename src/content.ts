@@ -131,11 +131,12 @@ export const foes: Record<FoeKind, FoeStats> = {
   moth: { health: 12, healthGrowth: 0.02, speed: 105, speedSpread: 10, speedGrowth: 0, reach: 16, ember: 4 },
   // The Briar Mass rolls after the warden and swallows briarlings (see massRule).
   // The Sleepless Warder falls and rises again (see warderRule); its health is for one life.
-  // The two bosses after it are plain, very tough pursuers until each gets
-  // its own way of fighting.
+  // The Stone Retinue comes as one great guardian and breaks apart (see retinueRule,
+  // which holds the numbers of every generation; these are the first one's).
+  // The Candle Guard is a plain, very tough pursuer until it gets its own way of fighting.
   mass: { health: 340, healthGrowth: 0, speed: 72, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
   sentinel: { health: 380, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
-  retinue: { health: 1500, healthGrowth: 0, speed: 66, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 16 },
+  retinue: { health: 900, healthGrowth: 0, speed: 62, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 8 },
   guard: { health: 2200, healthGrowth: 0, speed: 74, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 18 },
   // The seal-flower is rooted; the Duchess walks at her own pace (see duelRule). Neither leaves embers.
   seal: { health: 140, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
@@ -160,6 +161,19 @@ export const massRule = {
 // for `rest` seconds where it fell, out of reach of every spell, then rises
 // with full health and `quicken` of its first speed added for each fall.
 export const warderRule = { lives: 3, rest: 3, quicken: 0.3 }
+
+// The Stone Retinue has three generations. A shard of one generation, when
+// banished, breaks into `shards` of the next, thrown `fling` seconds outward
+// at `flingSpeed` from where it stood. The fight is won when none is left.
+export const retinueRule = {
+  tiers: [
+    { health: 900, speed: 62, reach: 38, ember: 8, shards: 3 },
+    { health: 220, speed: 90, reach: 26, ember: 3, shards: 6 },
+    { health: 40, speed: 124, reach: 16, ember: 1, shards: 0 },
+  ],
+  fling: 0.3,
+  flingSpeed: 260,
+}
 
 // Felling a boss blesses one learned spell.
 export const blessings = {

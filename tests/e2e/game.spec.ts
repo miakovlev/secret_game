@@ -525,6 +525,84 @@ test('the Sleepless Warder falls, lies marked and rises twice before it is felle
   expect(errors).toEqual([])
 })
 
+test('the Stone Retinue breaks into three and then eighteen, and is felled with its last shard', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await seedSave(page, { ...everything, heroes: ['warden'], variants: [] })
+  await frozenClock(page)
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  await page.getByRole('button', { name: 'Start run' }).click()
+  const hint = page.locator('#hint')
+  const label = page.locator('#clock-label')
+  const clock = page.locator('#clock')
+  const state = () => page.evaluate(() => {
+    const { battle } = (window as any).arena
+    const tiers = [0, 0, 0]
+    for (const foe of battle.foes) if (foe.kind === 'retinue') tiers[foe.tier]++
+    return { tiers, felled: battle.felled, boons: battle.boons, left: battle.bossLeft }
+  })
+  // Fells every shard of one generation at once.
+  const shatter = (tier: number) => page.evaluate((tier: number) => {
+    const { battle } = (window as any).arena
+    Object.assign(battle.spells.witchfire, { range: 4000, damage: 1e6, cooldown: 0.001 })
+    for (let i = 0; i < 200 && battle.foes.some((foe: any) => foe.kind === 'retinue' && foe.tier === tier); i++) {
+      if (battle.phase === 'choosing') break
+      battle.timers.witchfire = 0
+      battle.foes.sort((a: any, b: any) => a.tier - b.tier)
+      for (const foe of battle.foes) if (foe.tier !== tier) Object.assign(foe, { x: 100, y: 100 })
+      battle.step(0, 0, 0)
+    }
+    battle.spells.witchfire.range = 0
+  }, tier)
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.bossIndex = 2
+    battle.calm = 179.9
+    battle.immunity = 1e6
+    battle.schedule.splice(0)
+    battle.spells.witchfire.range = 0
+  })
+  await page.clock.runFor(500)
+  expect(await state()).toMatchObject({ tiers: [1, 0, 0], left: 1 })
+  await expect(label).toHaveText('STONE RETINUE ×1')
+  await expect(clock).toHaveText('100%')
+  await expect(hint).toHaveText(/The Stone Retinue breaks apart: the great one into three, each of those into six/)
+  await select(page, 'ru')
+  await expect(label).toHaveText('КАМЕННАЯ СВИТА ×1')
+  await expect(hint).toHaveText(/Каменная свита раскалывается.*Разбивай их по одному/)
+  await select(page, 'en')
+
+  await shatter(0)
+  await page.clock.runFor(100)
+  expect(await state()).toMatchObject({ tiers: [0, 3, 0], felled: 0, boons: 0 })
+  await expect(label).toHaveText('STONE RETINUE ×3')
+  await expect(clock).toHaveText(/^[5-6]\d%$/)
+
+  await shatter(1)
+  await page.clock.runFor(100)
+  expect(await state()).toMatchObject({ tiers: [0, 0, 18], felled: 0, boons: 0 })
+  await expect(label).toHaveText('STONE RETINUE ×18')
+  await expect(page.locator('#cards')).toBeHidden()
+
+  // The blessing comes with the last shard.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.foes = battle.foes.filter((foe: any) => foe.kind === 'retinue').slice(0, 1)
+  })
+  await page.clock.runFor(100)
+  await expect(label).toHaveText('STONE RETINUE ×1')
+  await expect(clock).toHaveText(/^[1-3]%$/)
+  await shatter(2)
+  for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  for (let turn = 0; turn < 8 && !(await page.locator('#cards-title').innerText()).includes('blessing'); turn++) {
+    await page.locator('#choices button').last().click()
+    for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  }
+  await expect(page.getByRole('heading', { name: 'A blessing' })).toBeVisible()
+  expect(await state()).toMatchObject({ tiers: [0, 0, 0], felled: 1 })
+  expect(errors).toEqual([])
+})
+
 test('winning opens the next difficulty and a starting relic, and the save survives a reload', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))

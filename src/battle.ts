@@ -1,5 +1,5 @@
 import {
-  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, massRule, mothHeal, warderRule, oil, relicIds,
+  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, massRule, mothHeal, retinueRule, warderRule, oil, relicIds,
   relicRule,
   relics, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
@@ -12,7 +12,7 @@ export type Point = { x: number; y: number }
 // A foe chases the warden by default. A boar goes chase → windup → charge →
 // rest; an archer goes chase → aim → volley. `timer` counts down the current
 // mode (or an archer's reload), `dir` is the locked direction of a charge or volley.
-export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley' | 'down'
+export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley' | 'down' | 'fling'
 export type Foe = Point & {
   kind: FoeKind
   speed: number
@@ -29,6 +29,8 @@ export type Foe = Point & {
   grown: number
   // How many times the Sleepless Warder has fallen.
   falls: number
+  // The generation of a shard of the Stone Retinue: 0 is the great guardian.
+  tier: number
 }
 export type Arrow = Point & { vx: number; vy: number; life: number }
 export type Seed = Point & { life: number }
@@ -48,6 +50,7 @@ export type BattleEvent =
   | ({ type: 'absorb' } & Shot)
   | { type: 'fall'; at: Point; falls: number }
   | { type: 'rise'; at: Point }
+  | { type: 'split'; at: Point; tier: number; shards: number }
   | { type: 'summon'; at: Point }
   | { type: 'bloom'; at: Point; radius: number }
   | { type: 'open'; at: Point }
@@ -83,7 +86,7 @@ export function xpGoal(level: number) {
 }
 
 export function makeFoe(kind: FoeKind, x: number, y: number, speed: number, health: number): Foe {
-  return { kind, x, y, speed, health, full: health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0, grown: 0, falls: 0 }
+  return { kind, x, y, speed, health, full: health, mode: 'chase', timer: 0, dir: { x: 0, y: 0 }, shots: 0, stung: 0, grown: 0, falls: 0, tier: 0 }
 }
 
 // How many times the wave's group has been due by the given second of the run.
@@ -607,7 +610,47 @@ export class Battle {
 
   // How close a foe must be to wound the warden. The Briar Mass grows.
   reach(foe: Foe) {
+    if (foe.kind === 'retinue') return retinueRule.tiers[foe.tier].reach
     return foes[foe.kind].reach + foe.grown * massRule.reach
+  }
+
+  // How much of the boss in the court is left, from 1 down to 0. For the Stone
+  // Retinue it counts every shard standing and every shard still to break out.
+  get bossLeft() {
+    const boss = this.boss
+    if (!boss) return 0
+    if (boss.kind !== 'retinue') return Math.max(0, boss.health) / boss.full
+    const { tiers } = retinueRule
+    // The health of everything a shard of this generation will break into.
+    const within = (tier: number): number =>
+      tiers[tier].shards && tiers[tier].shards * (tiers[tier + 1].health + within(tier + 1))
+    const tough = difficulties[this.difficulty - 1].toughness
+    let left = 0
+    for (const foe of this.foes) if (foe.kind === 'retinue') left += Math.max(0, foe.health) + tough * within(foe.tier)
+    return left / (tough * (tiers[0].health + within(0)))
+  }
+
+  // A banished shard of the Stone Retinue breaks into the next generation,
+  // thrown outward in a ring. Returns how many shards it left.
+  private shatter(foe: Foe, events: BattleEvent[]) {
+    const { tiers, fling } = retinueRule
+    const count = tiers[foe.tier].shards
+    if (!count) return 0
+    const next = tiers[foe.tier + 1]
+    const turn = this.random() * Math.PI * 2
+    for (let i = 0; i < count; i++) {
+      const shard = makeFoe(
+        'retinue', foe.x, foe.y, next.speed, next.health * difficulties[this.difficulty - 1].toughness,
+      )
+      const angle = turn + (i / count) * Math.PI * 2
+      shard.tier = foe.tier + 1
+      shard.mode = 'fling'
+      shard.timer = fling
+      shard.dir = { x: Math.cos(angle), y: Math.sin(angle) }
+      this.foes.push(shard)
+    }
+    events.push({ type: 'split', at: { x: foe.x, y: foe.y }, tier: foe.tier, shards: count })
+    return count
   }
 
   // How many pips of armor a foe's touch takes.
@@ -702,8 +745,11 @@ export class Battle {
       this.rest()
       events.push({ type: 'crown', open: true })
     } else {
-      this.embers.push({ ...fallen, value: foes[foe.kind].ember })
-      if (this.isBoss(foe)) {
+      const shard = foe.kind === 'retinue'
+      this.embers.push({ ...fallen, value: shard ? retinueRule.tiers[foe.tier].ember : foes[foe.kind].ember })
+      // The Stone Retinue is felled with its last shard, not its first.
+      const standing = shard && (this.shatter(foe, events) > 0 || this.foes.some(other => other.kind === 'retinue'))
+      if (this.isBoss(foe) && !standing) {
         // A felled boss blesses one learned spell; with every learned spell
         // already blessed it leaves a reliquary instead.
         this.felled++
@@ -924,7 +970,12 @@ export class Battle {
       const distance = Math.hypot(vx, vy)
       const toward = distance > 0 ? { x: vx / distance, y: vy / distance } : { x: 0, y: 0 }
       foe.timer = Math.max(0, foe.timer - dt)
-      if (foe.mode === 'down') {
+      if (foe.mode === 'fling') {
+        // A shard thrown from its broken parent, kept inside the walls.
+        foe.x = Math.max(22, Math.min(area.width - 22, foe.x + foe.dir.x * retinueRule.flingSpeed * dt))
+        foe.y = Math.max(22, Math.min(area.height - 22, foe.y + foe.dir.y * retinueRule.flingSpeed * dt))
+        if (foe.timer === 0) foe.mode = 'chase'
+      } else if (foe.mode === 'down') {
         // The Warder lies harmless, then rises where it fell, whole and quicker.
         if (foe.timer > 0) continue
         foe.mode = 'chase'
