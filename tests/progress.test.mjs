@@ -7,7 +7,7 @@ import { tipIds, Tutor } from '../src/tutor.ts'
 
 const run = (over = {}) => ({
   hero: 'warden', difficulty: 1, won: false, time: 300, kills: 80,
-  reachedDuel: false, felledGardener: false, ...over,
+  reachedDuel: false, felledBoss: false, ...over,
 })
 
 function withStorage(storage, check) {
@@ -76,10 +76,10 @@ test('a lost run opens no difficulty but still counts toward heroes and the bani
   assert.equal(later.progress.records[0].kills, 140)
   assert.deepEqual(later.rewards, [])
 
-  const bell = settle(later.progress, run({ felledGardener: true }))
+  const bell = settle(later.progress, run({ felledBoss: true }))
   assert.deepEqual(bell.rewards, [{ kind: 'hero', hero: 'ringer' }])
   assert.deepEqual(bell.progress.heroes, ['warden', 'duelist', 'ringer'])
-  assert.deepEqual([heroes.duelist.opens, heroes.ringer.opens], ['duel', 'gardener'])
+  assert.deepEqual([heroes.duelist.opens, heroes.ringer.opens], ['duel', 'boss'])
 })
 
 test('a win opens the starting relic of the hero who won, and a faster win sets a record', () => {
@@ -103,7 +103,7 @@ test('progress survives a reload through storage', () => {
   const storage = memory()
   withStorage(storage, () => {
     assert.deepEqual(load(), fresh())
-    const { progress } = settle(fresh(), run({ won: true, time: 630, reachedDuel: true, felledGardener: true }))
+    const { progress } = settle(fresh(), run({ won: true, time: 630, reachedDuel: true, felledBoss: true }))
     store(progress)
     assert.equal(JSON.parse(storage.values.get(saveKey)).version, saveVersion)
     assert.deepEqual(load(), progress)
@@ -228,4 +228,14 @@ test('a player who has learned everything sees no tips', () => {
     assert.equal(tutor.watch(now), undefined)
   }
   assert.equal(tutor.showing, undefined)
+})
+
+test('a save from before the bosses keeps the Bellringer it had opened', () => {
+  // Written when the Bellringer was earned from the Gardener: the save lists heroes, not how they were earned.
+  const old = JSON.stringify({ version: 1, difficulty: 2, heroes: ['warden', 'ringer'], variants: ['ringer'] })
+  const progress = parse(old)
+  assert.deepEqual(progress.heroes, ['warden', 'ringer'])
+  assert.deepEqual(progress.variants, ['ringer'])
+  // Felling a boss again earns nothing new for that hero.
+  assert.deepEqual(settle(progress, run({ felledBoss: true })).rewards, [])
 })

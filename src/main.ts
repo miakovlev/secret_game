@@ -1,13 +1,13 @@
 import Phaser from 'phaser'
-import { Battle, DURATION, makeFoe, MAX_ARMOR, xpGoal } from './battle'
+import { Battle, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Foe, Phase, Shot } from './battle'
 import {
-  archerVolley, boarCharge, court, difficulties, duelRule, foes, gardenerRule, heroes, heroIds, loadout, relicRule,
+  archerVolley, boarCharge, court, bossIds, difficulties, duelRule, foes, heroes, heroIds, loadout, relicRule,
 } from './content'
-import type { HeroId, RelicId, SpellId } from './content'
+import type { BossId, HeroId, RelicId, SpellId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture,
-  gardenerTexture, heroTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
+  bossTexture, heroTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -119,6 +119,8 @@ class Arena extends Phaser.Scene {
   private stood = { x: 0, y: 0 }
   private marked = 0
   private healthBefore = new WeakMap<Foe, number>()
+  // The health each boss came with, to show what is left of it.
+  private bossHealth = new WeakMap<Foe, number>()
   private struckAt = new WeakMap<Foe, number>()
   private settled?: Battle
   private battle = new Battle()
@@ -153,7 +155,10 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('marked', markedTexture())
     this.textures.addCanvas('knight', knightTexture())
     this.textures.addCanvas('moth', mothTexture())
-    this.textures.addCanvas('gardener', gardenerTexture())
+    this.textures.addCanvas('mass', bossTexture('#5a3344', '#ff9d6b'))
+    this.textures.addCanvas('sentinel', bossTexture('#3f4a78', '#bfe3ff'))
+    this.textures.addCanvas('retinue', bossTexture('#6f7078', '#f4f1e6'))
+    this.textures.addCanvas('guard', bossTexture('#8a5a2a', '#ffe08a'))
     this.textures.addCanvas('reliquary', reliquaryTexture())
     // The running scene, for browser tests and for poking at it from the console.
     Object.assign(window, { arena: this })
@@ -311,7 +316,7 @@ class Arena extends Phaser.Scene {
       time: b.elapsed,
       kills: b.kills,
       reachedDuel: b.stage === 'duel',
-      felledGardener: b.trial === 'won',
+      felledBoss: b.felled > 0,
     })
     this.progress = progress
     this.rewards = rewards
@@ -372,11 +377,11 @@ class Arena extends Phaser.Scene {
         const cue = ({
           shot: 'shot', kill: 'kill', pickup: 'pickup', level: 'level', heal: 'heal', open: 'chest',
           slash: 'slash', toll: 'toll', burst: 'burst', arrow: 'arrow', lash: 'lash', duel: 'bell', volley: 'arrow', erupt: 'burst',
-          bell: 'bell', rise: 'rise', summon: 'rise', crown: 'crown', phase: 'lash',
+          boss: 'bell', felled: 'chest', summon: 'rise', crown: 'crown', phase: 'lash',
         } as Partial<Record<BattleEvent['type'], Cue>>)[event.type]
         if (cue) this.sfx.play(cue)
         const span = {
-          kill: 0.3, level: 0.6, pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, erupt: 0.35, phase: 0.9, bloom: 0.22, summon: 0.5, rise: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
+          kill: 0.3, level: 0.6, pickup: 0.25, heal: 0.45, open: 0.5, mend: 0.45, erupt: 0.35, phase: 0.9, bloom: 0.22, summon: 0.5, felled: 0.8, slash: 0.16, toll: 0.32, lash: 0.24, chain: 0.16, burst: 0.3, sting: 0.18,
         }[event.type as string]
         if (span) this.pictures.push({ event, life: span, span })
       }
@@ -408,7 +413,6 @@ class Arena extends Phaser.Scene {
     if (this.lastPlace !== place) {
       const copy = messages[language]
       sector.textContent = copy.sector
-      clockLabel.textContent = b.stage === 'court' ? copy.timer : copy.duel.timer
       this.lastPlace = place
       this.lastPhase = undefined
     }
@@ -445,7 +449,7 @@ class Arena extends Phaser.Scene {
         w.fillStyle(0xffffff, 0.55 * (1 - since / 0.09))
         w.fillCircle(foe.x, foe.y, foes[foe.kind].reach + 4)
       }
-      const rooted = foe.kind === 'seal' || foe.kind === 'duchess' || foe.kind === 'gardener'
+      const rooted = foe.kind === 'seal' || foe.kind === 'duchess'
       const locked = foe.mode !== 'chase' && foe.mode !== 'rest'
       const pawing = foe.mode === 'windup' ? Math.sin(b.elapsed * 70) * 2 : 0
       image
@@ -491,21 +495,13 @@ class Arena extends Phaser.Scene {
         )
       }
     })
-    // The Gardener's grave: a glowing bell while it waits, filling as it is rung.
     const pulse = 0.5 + 0.5 * Math.sin(b.elapsed * 6)
-    if (b.stage === 'court' && b.trial === 'ready') {
-      const { x, y } = court.grave
-      w.lineStyle(3, 0xffe08a, 0.35 + 0.4 * pulse)
-      w.strokeCircle(x, y, gardenerRule.reach)
-      w.fillStyle(0xffe08a, 0.25)
-      w.slice(x, y, gardenerRule.reach, -Math.PI / 2, -Math.PI / 2 + (2 * Math.PI * b.ringing) / gardenerRule.ring).fillPath()
-    }
-    // An arrow at the edge of the view points to what matters now: the grave or
-    // the risen Gardener, and in the duel the seal-flower or the open Duchess.
-    const lord = b.foes.find(foe => foe.kind === 'gardener')
+    // An arrow at the edge of the view points to what matters now: the boss in
+    // the court, and in the duel the seal-flower or the open Duchess.
+    const lord = b.stage === 'court' ? b.boss : undefined
     const beacon = b.stage === 'duel'
       ? b.foes.find(foe => foe.kind === 'seal') ?? b.duchess
-      : lord ?? (b.trial === 'ready' ? court.grave : undefined)
+      : lord
     if (beacon) {
       const view = b.camera()
       const inside =
@@ -515,7 +511,7 @@ class Arena extends Phaser.Scene {
         const turn = Math.atan2(beacon.y - b.player.y, beacon.x - b.player.x)
         const ax = Math.max(view.x + 26, Math.min(view.x + court.view.width - 26, beacon.x))
         const ay = Math.max(view.y + 26, Math.min(view.y + court.view.height - 26, beacon.y))
-        w.fillStyle(b.stage === 'duel' ? 0xd877e6 : lord ? 0xf4f1e6 : 0xffe08a, 0.6 + 0.4 * pulse)
+        w.fillStyle(b.stage === 'duel' ? 0xd877e6 : 0xf4f1e6, 0.6 + 0.4 * pulse)
         w.beginPath()
         w.moveTo(ax + Math.cos(turn) * 14, ay + Math.sin(turn) * 14)
         w.lineTo(ax + Math.cos(turn + 2.5) * 12, ay + Math.sin(turn + 2.5) * 12)
@@ -687,7 +683,7 @@ class Arena extends Phaser.Scene {
         g.fillCircle(event.at.x, event.at.y, event.radius * (0.5 + 0.5 * (1 - fade)))
         g.lineStyle(2, 0xffd27a, fade)
         g.strokeCircle(event.at.x, event.at.y, event.radius * (0.5 + 0.5 * (1 - fade)))
-      } else if (event.type === 'summon' || event.type === 'rise') {
+      } else if (event.type === 'summon' || event.type === 'felled') {
         g.lineStyle(4, 0x9fc38a, fade)
         g.strokeCircle(event.at.x, event.at.y, 30 + (1 - fade) * 70)
       } else if (event.type === 'erupt') {
@@ -741,17 +737,10 @@ class Arena extends Phaser.Scene {
       g.lineStyle(1.5, 0xffdb93, fade)
       g.strokeCircle(to.x, to.y, 4 + progress * 8)
     }
-    // The flower on the Gardener's chest: white and wide while he can be struck.
+    // A pale ring marks the boss among the crowd.
     if (lord) {
-      const open = lord.mode === 'open'
-      g.fillStyle(open ? 0xf4f1e6 : 0x3d4a36, 1)
-      g.fillCircle(lord.x, lord.y, open ? 13 + 2 * pulse : 7)
-      if (open) {
-        g.fillStyle(0xffe08a, 1)
-        g.fillCircle(lord.x, lord.y, 5)
-        g.lineStyle(2, 0xf4f1e6, 0.5 + 0.4 * pulse)
-        g.strokeCircle(lord.x, lord.y, 48)
-      }
+      g.lineStyle(2, 0xf4f1e6, 0.35 + 0.3 * pulse)
+      g.strokeCircle(lord.x, lord.y, foes[lord.kind].reach + 10)
     }
     // First-run tips, remembered in the save as soon as each is learned.
     const copy = messages[language]
@@ -772,18 +761,28 @@ class Arena extends Phaser.Scene {
       this.progress = { ...this.progress, tips: tipIds.filter(id => this.tutor.seen.has(id)) }
       store(this.progress)
     }
-    const trial = b.phase === 'playing' && b.stage === 'court'
-      ? lord ? copy.trialHint : b.trial === 'ready' ? copy.bellHint : ''
-      : ''
+    const trial = b.phase === 'playing' && lord ? copy.bossHint(copy.bosses[lord.kind as BossId]) : ''
     const duel = b.phase === 'playing' && lady ? (b.shielded ? copy.duel.seal : copy.duel.open) : ''
     const tip = lesson ? copy.tips[lesson] : trial || duel
     if (hint.textContent !== tip) hint.textContent = tip
     hint.hidden = !tip
+    // The clock counts down to the next boss; while a boss lives it shows the
+    // boss's health instead.
+    const next = b.nextBoss
+    if (lord && !this.bossHealth.has(lord)) this.bossHealth.set(lord, lord.health)
     const timer = lady
       ? Math.ceil((100 * Math.max(0, lady.health)) / foes.duchess.health) + '%'
-      : b.stage === 'duel'
-        ? '0%'
-        : timeText(Math.ceil(DURATION - b.elapsed))
+      : lord
+        ? Math.ceil((100 * Math.max(0, lord.health)) / this.bossHealth.get(lord)!) + '%'
+        : next && b.stage === 'court'
+          ? timeText(Math.ceil(next.inSeconds))
+          : '0%'
+    const heading = (
+      b.stage === 'duel' ? copy.bosses.duchess
+        : lord ? copy.bosses[lord.kind as BossId]
+          : copy.bossIn(copy.bosses[next!.boss])
+    ).toUpperCase()
+    if (clockLabel.textContent !== heading) clockLabel.textContent = heading
     const count = String(b.kills).padStart(2, '0')
     if (clock.textContent !== timer) clock.textContent = timer
     if (kills.textContent !== count) kills.textContent = count
@@ -934,6 +933,7 @@ class Arena extends Phaser.Scene {
         ...(Object.keys(b.relics).length
           ? [copy.relicLine(Object.entries(b.relics).map(([id, level]) => `${copy.relics[id as RelicId].name} ${level}`).join(', '))]
           : []),
+        copy.felledLine(b.felled, bossIds.length),
         ...(b.stage === 'duel' ? [copy.phaseLine(b.duelPhase)] : []),
         copy.difficultyLine(copy.difficulties[b.difficulty - 1].name),
         ...this.rewards.map(reward =>

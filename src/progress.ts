@@ -33,7 +33,8 @@ export type Outcome = {
   kills: number
   // The run lasted until the Duchess came.
   reachedDuel: boolean
-  felledGardener: boolean
+  // At least one boss fell during the run.
+  felledBoss: boolean
 }
 
 export type Reward =
@@ -137,7 +138,7 @@ export function settle(before: Progress, run: Outcome): { progress: Progress; re
   for (const id of heroIds) {
     const earned =
       (heroes[id].opens === 'duel' && run.reachedDuel) ||
-      (heroes[id].opens === 'gardener' && run.felledGardener)
+      (heroes[id].opens === 'boss' && run.felledBoss)
     if (earned && !progress.heroes.includes(id)) {
       progress.heroes.push(id)
       rewards.push({ kind: 'hero', hero: id })

@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, gardenerRule, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
-  relics, seedRule, oil, run, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
+import { bossIds, bossRule, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
+  relics, seedRule, oil, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
 const briarling = foes.briarling
 const { view } = court
-import { Battle, bursts, DURATION, makeFoe, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
+
+// Brings the last boss, the Duchess, in on the next step.
+function dawn(b) {
+  b.bossIndex = bossIds.length - 1
+  b.calm = bossRule.every
+}
+import { Battle, bursts, makeFoe, MAX_ARMOR, PICKUP_RADIUS, xpGoal } from '../src/battle.ts'
 
 function playing(random = () => 0) {
   const battle = new Battle(random)
@@ -206,7 +212,8 @@ test('the dawn bell stops the waves and brings the Duchess into the same court',
   b.reliquaries = [{ x: 80, y: 80 }]
   const build = JSON.stringify([b.loadout, b.spells])
   const stood = { ...b.player }
-  b.elapsed = DURATION - .01
+  dawn(b)
+  b.calm -= .01
   assert.equal(b.stage, 'court')
   const events = []
   for (let i = 0; i < 2; i++) events.push(...b.step(1 / 60, 0, 0))
@@ -237,7 +244,6 @@ test('the dawn bell stops the waves and brings the Duchess into the same court',
   for (let i = 0; i < frames; i++) b.step(1 / 60, 0, 0)
   assert.equal(b.summons, before)
   assert.deepEqual(b.foes.map(foe => foe.kind).sort(), ['boar', 'duchess', 'seal'])
-  assert.ok(b.elapsed > DURATION + 7)
   // And she has walked toward the hero meanwhile.
   assert.ok(Math.hypot(lady.x - b.player.x, lady.y - b.player.y) < Math.hypot(court.gate.x - stood.x, 70 - stood.y) - 100)
 })
@@ -589,16 +595,17 @@ test('at a wave boundary survivors stay and each new group enters exactly once',
   assert.equal(b.foes.length, 1 + expected)
 })
 
-test('a whole run sends in exactly the groups the schedule lists', () => {
+test('the waves send in exactly the groups the schedule lists', () => {
   const b = new Battle(seeded())
   b.phase = 'playing'
   b.spells.witchfire.range = 0
   b.armor = Infinity
   const seen = new Set()
   const entered = { briarling: 0, marked: 0, boar: 0, archer: 0, knight: 0, moth: 0 }
-  let bells = 0
-  while (b.elapsed < run.duration + 5) {
-    bells += b.step(1 / 30, 0, 0).filter(event => event.type === 'duel').length
+  // Twelve minutes and a bit: every stretch of the schedule has begun.
+  const until = 760
+  while (b.elapsed < until) {
+    b.step(1 / 30, 0, 0)
     for (const foe of b.foes) {
       if (seen.has(foe) || !(foe.kind in entered)) continue
       seen.add(foe)
@@ -609,21 +616,20 @@ test('a whole run sends in exactly the groups the schedule lists', () => {
     b.arrows = []
   }
   assert.equal(b.phase, 'playing')
-  assert.equal(DURATION, run.duration)
+  assert.equal(b.stage, 'court')
   for (const kind of Object.keys(entered)) {
     const listed = waves
       .filter(wave => wave.kind === kind)
-      .reduce((sum, wave) => sum + bursts(wave, run.duration) * wave.count, 0)
+      .reduce((sum, wave) => sum + bursts(wave, b.elapsed) * wave.count, 0)
     assert.equal(entered[kind], listed, kind)
     assert.ok(listed > 0)
   }
   const first = kind => Math.min(...waves.filter(wave => wave.kind === kind).map(wave => wave.from))
   assert.ok(first('briarling') < first('boar') && first('boar') < first('archer'))
   assert.ok(first('archer') < first('knight') && first('knight') <= first('moth'))
-  // The Duchess comes exactly once, when the nine minutes are up.
-  assert.equal(bells, 1)
-  assert.equal(b.stage, 'duel')
-  assert.equal(run.duration, 540)
+  // The last stretch has no end of its own: it lasts until the Duchess comes.
+  assert.ok(waves.some(wave => wave.to === Infinity))
+  assert.equal(bursts({ kind: 'boar', from: 10, to: Infinity, every: 5, count: 1 }, 1010), 201)
 })
 
 test('after a pause the schedule continues from the same second', () => {
@@ -823,7 +829,7 @@ test('lamp oil mends one pip, never past the maximum, and waits while the armor 
 // The hero at the moment the Duchess walks in.
 function inDuel(random = () => 0.5) {
   const b = playing(random)
-  b.elapsed = DURATION
+  dawn(b)
   b.step(1 / 60, 0, 0)
   b.immunity = 0
   const seal = b.foes.find(foe => foe.kind === 'seal')
@@ -1124,10 +1130,9 @@ test('the run is won only when the open Duchess falls, and can be lost in the du
   assert.equal(lady.health, 0.1)
   b.timers.witchfire = 0
   const events = b.step(1 / 60, 0, 0)
-  assert.deepEqual(events.map(event => event.type), ['shot', 'kill'])
+  assert.deepEqual(events.map(event => event.type), ['shot', 'kill', 'felled'])
   assert.equal(b.phase, 'won')
   assert.equal(b.stage, 'duel')
-  assert.ok(b.elapsed > DURATION)
 
   const fallen = only('lash')
   fallen.lady.speed = 0
@@ -1347,7 +1352,7 @@ test('seeds and fireflies cannot hurt the shielded Duchess, and seeds already so
   const b = hero('duelist')
   learn(b, 'seeds')
   b.seeds = [{ x: 100, y: 100, life: 9 }]
-  b.elapsed = DURATION
+  dawn(b)
   b.step(1 / 60, 0, 0)
   assert.equal(b.stage, 'duel')
   assert.equal(b.seeds.length, 1)
@@ -1595,7 +1600,7 @@ test('relics and an unopened reliquary are still there when the Duchess comes; a
   b.relics = { boots: 2, cloak: 1 }
   b.armor = 6
   b.reliquaries = [{ x: 50, y: 50 }]
-  b.elapsed = DURATION
+  dawn(b)
   b.step(1 / 60, 0, 0)
   assert.equal(b.stage, 'duel')
   assert.deepEqual(b.relics, { boots: 2, cloak: 1 })
@@ -1700,152 +1705,7 @@ test('a moth hangs back at its distance instead of charging in', () => {
   assert.equal(near.b.armor, MAX_ARMOR)
 })
 
-// --- Step 3.4: the Gardener's trial and the blessings.
-
-// A quiet, unkillable hero standing by the grave at the given second.
-function atGrave(second = gardenerRule.from + 5) {
-  const b = runAt(second)
-  b.player = { x: court.grave.x + 20, y: court.grave.y }
-  const quiet = (frames, dx = 0, dy = 0) => {
-    const events = []
-    for (let i = 0; i < frames; i++) {
-      events.push(...b.step(1 / 60, dx, dy))
-      b.foes = b.foes.filter(foe => foe.kind === 'gardener' || foe.pulled)
-    }
-    return events
-  }
-  return { b, quiet }
-}
-
-test('the bell sleeps until the middle of the run and wakes once', () => {
-  const b = runAt(gardenerRule.from - 1)
-  b.player = { x: court.grave.x + 20, y: court.grave.y }
-  const early = []
-  for (let i = 0; i < 50; i++) early.push(...b.step(1 / 60, 0, 0))
-  assert.equal(b.trial, 'asleep')
-  assert.equal(b.ringing, 0)
-  assert.ok(!early.some(event => event.type === 'bell'))
-  const later = []
-  for (let i = 0; i < 30; i++) later.push(...b.step(1 / 60, 0, 0))
-  assert.equal(later.filter(event => event.type === 'bell').length, 1)
-  assert.equal(b.trial, 'ready')
-  assert.equal(new Battle().trial, 'asleep')
-})
-
-test('standing by the grave calls the Gardener out once; walking past does not', () => {
-  const passing = atGrave()
-  passing.b.player = { x: court.grave.x - 300, y: court.grave.y }
-  // Walk straight through the ring without stopping: under a second inside.
-  passing.quiet(Math.round((gardenerRule.ring - 0.4) * 60))
-  passing.b.player = { x: court.grave.x, y: court.grave.y + 10 }
-  passing.quiet(Math.round((gardenerRule.ring - 0.4) * 60))
-  assert.ok(passing.b.ringing > 0)
-  passing.b.player = { x: court.grave.x + gardenerRule.reach + 30, y: court.grave.y }
-  passing.quiet(5)
-  assert.equal(passing.b.ringing, 0)
-  assert.equal(passing.b.trial, 'ready')
-  assert.ok(!passing.b.foes.some(foe => foe.kind === 'gardener'))
-
-  const { b, quiet } = atGrave()
-  const events = quiet(Math.round(gardenerRule.ring * 60) + 3)
-  assert.deepEqual(events.filter(event => event.type === 'rise'), [{ type: 'rise', at: { ...court.grave } }])
-  assert.equal(b.trial, 'fighting')
-  const risen = b.foes.filter(foe => foe.kind === 'gardener')
-  assert.equal(risen.length, 1)
-  assert.equal(risen[0].mode, 'summon')
-  assert.equal(risen[0].health, risen[0].full)
-  assert.ok(b.immunity > 1.4)
-  assert.ok(risen[0].full > foes.gardener.health)
-  // Staying by the grave does not call a second one.
-  quiet(240)
-  assert.equal(b.foes.filter(foe => foe.kind === 'gardener').length, 1)
-})
-
-test('the stooped Gardener is untouchable; he pulls up briarlings, then bares his flower for a while', () => {
-  const { b } = atGrave()
-  b.spells.witchfire.range = 2000
-  b.spells.witchfire.damage = 1
-  for (let i = 0; i < Math.round(gardenerRule.ring * 60) + 3; i++) {
-    b.step(1 / 60, 0, 0)
-    b.foes = b.foes.filter(foe => foe.kind === 'gardener')
-  }
-  const lord = b.foes[0]
-  const full = lord.health
-  // Stooped: no spark touches him, and the waves keep walking in.
-  let arrivals = 0
-  const events = []
-  while (lord.mode === 'summon') {
-    const before = b.foes.length
-    const step = b.step(1 / 60, 0, 0)
-    events.push(...step)
-    if (lord.mode === 'summon') {
-      arrivals += b.foes.length - before
-      b.foes = [lord]
-      assert.equal(lord.health, full)
-    }
-  }
-  assert.ok(arrivals > 0)
-  assert.deepEqual(events.filter(event => event.type === 'summon').length, 1)
-  const pack = b.foes.filter(foe => foe.kind === 'briarling')
-  assert.ok(pack.length >= gardenerRule.pack)
-  const pulled = pack.filter(foe => Math.abs(Math.hypot(foe.x - lord.x, foe.y - lord.y) - 52) < 6)
-  assert.equal(pulled.length, gardenerRule.pack)
-
-  // Open: now he bleeds, for exactly the open time, then stoops again.
-  b.foes = [lord]
-  let open = 0
-  while (lord.mode === 'open') {
-    b.step(1 / 60, 0, 0)
-    b.foes = [lord]
-    open++
-  }
-  assert.ok(Math.abs(open / 60 - gardenerRule.open) < 0.1)
-  assert.ok(lord.health < full)
-  assert.equal(lord.mode, 'summon')
-  // He walks toward the hero all the while and is not pushed around by the toll.
-  assert.ok(Math.hypot(lord.x - court.grave.x, lord.y - court.grave.y) > 5)
-})
-
-function fellGardener(b) {
-  const lord = makeFoe('gardener', b.player.x + 80, b.player.y, 0, 0.1)
-  lord.mode = 'open'
-  lord.timer = 99
-  b.trial = 'fighting'
-  b.foes = [lord]
-  b.spells[b.loadout[0]].range = 2000
-  b.timers[b.loadout[0]] = 0
-  return b.step(1 / 60, 0, 0)
-}
-
-test('felling the Gardener gives one blessing for one learned spell, once', () => {
-  const b = playing(() => 0.5)
-  learn(b, 'toll')
-  b.spells.toll.range = 0
-  const events = fellGardener(b)
-  assert.ok(events.some(event => event.type === 'kill'))
-  assert.equal(b.trial, 'won')
-  assert.equal(b.embers.at(-1).value, foes.gardener.ember)
-  // The blessing is offered on the next step, one card per learned spell.
-  b.embers = []
-  b.step(1 / 60, 0, 0)
-  assert.equal(b.phase, 'choosing')
-  assert.ok(b.blessing)
-  assert.ok(!b.openingChest)
-  assert.deepEqual(b.offer, [{ kind: 'bless', spell: 'witchfire' }, { kind: 'bless', spell: 'toll' }])
-  b.choose(1)
-  b.choose(1)
-  assert.equal(b.phase, 'playing')
-  assert.deepEqual(b.blessed, { toll: true })
-  assert.equal(b.boons, 0)
-  assert.ok(!b.blessing)
-  // The bell stays silent afterwards.
-  b.elapsed = gardenerRule.from + 60
-  b.player = { ...court.grave }
-  b.armor = Infinity
-  advance(b, 200)
-  assert.equal(b.trial, 'won')
-  assert.ok(!b.foes.some(foe => foe.kind === 'gardener'))
-})
+// --- Blessings.
 
 test('a blessing is never offered twice for the same spell, and waits behind a reliquary', () => {
   const b = playing(() => 0.5)
@@ -1867,39 +1727,6 @@ test('a blessing is never offered twice for the same spell, and waits behind a r
   assert.deepEqual(b.offer, [{ kind: 'bless', spell: 'seeds' }])
   b.choose(0)
   assert.equal(b.phase, 'playing')
-})
-
-test('the dawn bell closes an unfinished trial and leaves a won one won', () => {
-  for (const [state, after] of [['ready', 'closed'], ['fighting', 'closed'], ['asleep', 'closed'], ['won', 'won']]) {
-    const b = playing()
-    b.trial = state
-    b.ringing = 0.7
-    b.foes = [makeFoe('gardener', b.player.x + 400, b.player.y, 0, 100)]
-    b.elapsed = DURATION
-    b.step(1 / 60, 0, 0)
-    assert.equal(b.stage, 'duel')
-    assert.equal(b.trial, after)
-    assert.equal(b.ringing, 0)
-    // The Gardener sinks back when the Duchess comes.
-    assert.ok(!b.foes.some(foe => foe.kind === 'gardener'))
-    // The bell at the grave no longer answers.
-    b.armor = Infinity
-    b.spells.witchfire.range = 0
-    b.player = { x: court.grave.x + 10, y: court.grave.y }
-    advance(b, 150)
-    assert.equal(b.trial, after)
-    assert.ok(!b.foes.some(foe => foe.kind === 'gardener'))
-  }
-})
-
-test('a moth does not mend the Gardener', () => {
-  const { b, moth, beat } = ward([['gardener', 60, 50]])
-  const lord = b.foes[1]
-  lord.mode = 'open'
-  lord.timer = 99
-  assert.deepEqual(beat(), [])
-  assert.equal(lord.health, 50)
-  assert.ok(b.foes.includes(moth))
 })
 
 test('blessed witchfire blooms on the target and scorches the foes beside it', () => {
@@ -2071,8 +1898,7 @@ test('blessings and relics earned before dawn still work in the duel', () => {
   const b = playing()
   b.blessed.witchfire = true
   b.relics.ring = 2
-  b.trial = 'won'
-  b.elapsed = DURATION
+  dawn(b)
   b.step(1 / 60, 0, 0)
   assert.deepEqual(b.blessed, { witchfire: true })
   assert.deepEqual(b.relics, { ring: 2 })
@@ -2103,7 +1929,7 @@ test('a harder difficulty makes every foe tougher', () => {
     b.step(0, 0, 0)
     const first = b.foes.find(foe => foe.kind === 'briarling')
     assert.ok(Math.abs(first.health - (briarling.health + 40 * briarling.healthGrowth) * toughness) < 1e-9)
-    b.elapsed = DURATION
+    dawn(b)
     b.step(1 / 60, 0, 0)
     assert.ok(Math.abs(b.duchess.health - foes.duchess.health * toughness) < 1e-9)
     assert.ok(Math.abs(b.foes.find(foe => foe.kind === 'seal').full - foes.seal.health * toughness) < 1e-9)
@@ -2157,12 +1983,6 @@ test('on the third difficulty every wave starts earlier and overlaps the one bef
     return b.foes.some(foe => foe.kind === 'boar')
   }
   assert.deepEqual([seen(1), seen(2), seen(3)], [false, false, true])
-  // The run is not shorter for it: the Duchess still comes at dawn.
-  const late = new Battle(seeded(), 'warden', 3)
-  late.phase = 'playing'
-  late.elapsed = DURATION - 1
-  late.step(1 / 60, 0, 0)
-  assert.equal(late.stage, 'court')
 })
 
 test('a hero who has won before may start with their own relic', () => {
@@ -2199,4 +2019,199 @@ test('a foe felled by the bloom of a spark is not struck again when the spark le
   assert.equal(b.kills, 1)
   assert.equal(b.embers.length, 1)
   assert.equal(hurt(bystander), 0)
+})
+
+// --- Step 5.1: a boss every three minutes.
+
+// A quiet, unkillable hero a moment before the given boss is due.
+function before(index, random = seeded()) {
+  const b = new Battle(random)
+  b.phase = 'playing'
+  b.spells.witchfire.range = 0
+  b.armor = Infinity
+  b.bossIndex = index
+  b.calm = bossRule.every - 0.05
+  return b
+}
+
+test('the bosses come in a fixed order, three minutes apart, the Duchess last', () => {
+  assert.deepEqual(bossIds, ['mass', 'sentinel', 'retinue', 'guard', 'duchess'])
+  assert.equal(bossRule.every, 180)
+  const b = new Battle(seeded())
+  b.phase = 'playing'
+  b.spells.witchfire.range = 0
+  b.armor = Infinity
+  assert.deepEqual(b.nextBoss, { boss: 'mass', inSeconds: 180 })
+  assert.equal(b.boss, undefined)
+  // Nothing comes early.
+  const early = []
+  while (b.elapsed < 179.9) early.push(...b.step(1 / 30, 0, 0).filter(event => event.type === 'boss'))
+  assert.deepEqual(early, [])
+  assert.ok(Math.abs(b.nextBoss.inSeconds - (180 - b.elapsed)) < 1e-6)
+  const arrival = []
+  while (b.elapsed < 180.2) arrival.push(...b.step(1 / 30, 0, 0).filter(event => event.type === 'boss'))
+  assert.deepEqual(arrival, [{ type: 'boss', boss: 'mass' }])
+  assert.equal(b.boss.kind, 'mass')
+  assert.equal(b.bossIndex, 1)
+  assert.equal(b.stage, 'court')
+  // It walks in from beyond the view like any other foe.
+  for (const id of ['mass', 'sentinel', 'retinue', 'guard']) {
+    assert.ok(foes[id].health > 10 * foes.knight.health / 4)
+    assert.ok(foes[id].speed > 0)
+  }
+})
+
+test('the count to the next boss stands still while a boss is in the court', () => {
+  const b = before(0)
+  advance(b, 6)
+  const boss = b.boss
+  assert.equal(boss.kind, 'mass')
+  assert.equal(b.calm, 0)
+  assert.deepEqual(b.nextBoss, { boss: 'sentinel', inSeconds: 180 })
+  // Four minutes with the boss alive: no second boss, no count, but the waves go on.
+  const others = () => b.foes.filter(foe => foe !== boss).length
+  const start = others()
+  const events = []
+  for (let i = 0; i < 240 * 30; i++) {
+    events.push(...b.step(1 / 30, 0, 0).filter(event => event.type === 'boss'))
+    if (b.foes.length > 40) b.foes = [boss]
+  }
+  assert.deepEqual(events, [])
+  assert.equal(b.calm, 0)
+  assert.equal(b.bossIndex, 1)
+  assert.ok(b.elapsed > 240)
+  assert.ok(others() + start > 0)
+  assert.ok(b.foes.some(foe => foe.kind === 'briarling'))
+
+  // Felled: the count starts from nothing and the next boss comes three minutes later.
+  boss.health = 0.1
+  b.spells.witchfire.range = 4000
+  b.foes = [boss]
+  b.timers.witchfire = 0
+  const felled = b.step(1 / 30, 0, 0)
+  assert.deepEqual(felled.filter(event => event.type === 'felled').map(event => event.boss), ['mass'])
+  assert.equal(b.felled, 1)
+  assert.equal(b.boss, undefined)
+  b.spells.witchfire.range = 0
+  const at = b.elapsed
+  const next = []
+  for (let i = 0; i < 200 * 30 && !next.length; i++) {
+    if (b.phase === 'choosing') b.choose(0)
+    next.push(...b.step(1 / 30, 0, 0).filter(event => event.type === 'boss'))
+    b.embers = []
+    if (b.foes.length > 40) b.foes = b.foes.filter(foe => foe.kind === 'sentinel')
+  }
+  assert.deepEqual(next, [{ type: 'boss', boss: 'sentinel' }])
+  assert.ok(Math.abs(b.elapsed - at - 180) < 0.2)
+})
+
+test('after a pause the count to the boss continues from the same second', () => {
+  const play = pauseAt => {
+    const b = before(1, seeded(9))
+    b.calm = bossRule.every - 2
+    for (let frame = 0; frame < 300; frame++) {
+      if (frame === pauseAt) {
+        b.phase = 'paused'
+        advance(b, 400, 1, 1)
+        b.phase = 'playing'
+      }
+      b.step(1 / 60, 0, 0)
+    }
+    return JSON.stringify(b)
+  }
+  const straight = play(-1)
+  assert.equal(play(60), straight)
+  assert.equal(play(125), straight)
+  assert.ok(JSON.parse(straight).foes.some(foe => foe.kind === 'sentinel'))
+})
+
+test('a felled boss blesses one learned spell, and leaves a reliquary when none is left to bless', () => {
+  const fell = blessed => {
+    const b = playing(() => 0.5)
+    learn(b, 'toll')
+    b.timers.toll = 9
+    Object.assign(b.blessed, blessed)
+    const boss = makeFoe('sentinel', b.player.x + 80, b.player.y, 0, 0.1)
+    b.foes = [boss]
+    b.spells.witchfire.range = 2000
+    const events = b.step(0, 0, 0)
+    return { b, events, at: { x: boss.x, y: boss.y } }
+  }
+  const first = fell({})
+  assert.deepEqual(first.events.map(event => event.type), ['shot', 'kill', 'felled'])
+  assert.equal(first.b.boons, 1)
+  assert.deepEqual(first.b.reliquaries, [])
+  assert.equal(first.b.embers.at(-1).value, foes.sentinel.ember)
+  // The blessing is offered on the next step, one card per learned spell.
+  first.b.embers = []
+  first.b.spells.witchfire.range = 0
+  first.b.step(1 / 60, 0, 0)
+  assert.ok(first.b.blessing)
+  assert.deepEqual(first.b.offer, [{ kind: 'bless', spell: 'witchfire' }, { kind: 'bless', spell: 'toll' }])
+  first.b.choose(1)
+  first.b.choose(1)
+  assert.equal(first.b.phase, 'playing')
+  assert.deepEqual(first.b.blessed, { toll: true })
+
+  // One spell still unblessed: a blessing. Both blessed: a reliquary.
+  assert.equal(fell({ toll: true }).b.boons, 1)
+  const full = fell({ toll: true, witchfire: true })
+  assert.equal(full.b.boons, 0)
+  assert.deepEqual(full.b.reliquaries, [full.at])
+  assert.deepEqual(full.events.map(event => event.type), ['shot', 'bloom', 'kill', 'felled', 'chest'])
+})
+
+test('a boss is not mended by a moth nor thrown back by the toll, and a run can be lost to it', () => {
+  const { b, moth, beat } = ward([['mass', 60, 50]])
+  const boss = b.foes[1]
+  assert.deepEqual(beat(), [])
+  assert.equal(boss.health, 50)
+  assert.ok(b.foes.includes(moth))
+
+  const ringer = hero('ringer')
+  const big = makeFoe('guard', ringer.player.x + 40, ringer.player.y, 0, 1e9)
+  ringer.foes = [big]
+  ringer.immunity = 9
+  ringer.step(0, 0, 0)
+  assert.equal(big.x, ringer.player.x + 40)
+  assert.equal(1e9 - big.health, spells.toll.damage)
+
+  const doomed = before(2)
+  doomed.armor = 1
+  advance(doomed, 6)
+  const boss2 = doomed.boss
+  Object.assign(boss2, doomed.player)
+  doomed.step(1 / 60, 0, 0)
+  assert.equal(doomed.phase, 'lost')
+  assert.equal(doomed.stage, 'court')
+})
+
+test('the Duchess is the fifth boss: she comes when her turn is due and felling her wins the run', () => {
+  const b = before(4)
+  const events = []
+  for (let i = 0; i < 6; i++) events.push(...b.step(1 / 60, 0, 0))
+  assert.deepEqual(events.map(event => event.type).filter(type => type === 'boss' || type === 'duel'), ['boss', 'duel'])
+  assert.equal(b.stage, 'duel')
+  assert.equal(b.boss.kind, 'duchess')
+  assert.equal(b.nextBoss, undefined)
+  assert.equal(b.bossIndex, bossIds.length)
+  // No boss after her, however long the duel lasts.
+  b.foes.find(foe => foe.kind === 'seal').health = 1e9
+  const later = []
+  for (let i = 0; i < 400 * 30; i++) later.push(...b.step(1 / 30, 0, 0).filter(event => event.type === 'boss'))
+  assert.deepEqual(later, [])
+
+  const { b: won, seal, lady } = inDuel()
+  won.spells.witchfire.range = 4000
+  won.felled = 4
+  seal.health = 0.1
+  lady.health = 0.1
+  won.step(1 / 60, 0, 0)
+  won.timers.witchfire = 0
+  const last = won.step(1 / 60, 0, 0)
+  assert.deepEqual(last.map(event => event.type), ['shot', 'kill', 'felled'])
+  assert.equal(won.phase, 'won')
+  assert.equal(won.felled, 5)
+  assert.equal(new Battle().felled, 0)
+  assert.equal(new Battle().bossIndex, 0)
 })

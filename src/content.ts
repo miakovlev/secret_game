@@ -62,8 +62,8 @@ export type Hero = {
   // Multiplies how far the funeral toll pushes foes.
   knockback: number
   // What opens the hero: available from the start, after first holding out
-  // until the Duchess comes, or after first felling the Gardener.
-  opens: 'start' | 'duel' | 'gardener'
+  // until the Duchess comes, or after first felling a boss.
+  opens: 'start' | 'duel' | 'boss'
   // The relic the hero may start with once a run has been won with them.
   variant: RelicId
 }
@@ -71,7 +71,7 @@ export type Hero = {
 export const heroes: Record<HeroId, Hero> = {
   warden: { spell: 'witchfire', speed: 160, chain: 3, chainRange: 120, knockback: 1, opens: 'start', variant: 'beads' },
   duelist: { spell: 'moonblade', speed: 190, chain: 0, chainRange: 0, knockback: 1, opens: 'duel', variant: 'boots' },
-  ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6, opens: 'gardener', variant: 'cloak' },
+  ringer: { spell: 'toll', speed: 160, chain: 0, chainRange: 0, knockback: 1.6, opens: 'boss', variant: 'cloak' },
 }
 
 // A hero can hold `slots` spells. A level-up shows `cards` cards, at most
@@ -91,11 +91,15 @@ export const difficulties = [
   { toughness: 1.45, flankEvery: 3, early: 20 },
 ]
 
-// Seconds of waves before dawn.
-export const run = { duration: 540 }
+// A boss comes every `every` seconds, in this order; the last one ends the
+// run. The count to the next boss stands still while a boss is in the court.
+export const bossRule = { every: 180 }
+export const bossIds = ['mass', 'sentinel', 'retinue', 'guard', 'duchess'] as const
+export type BossId = (typeof bossIds)[number]
 
 export const foeKinds = [
-  'briarling', 'marked', 'boar', 'archer', 'knight', 'moth', 'gardener', 'seal', 'duchess',
+  'briarling', 'marked', 'boar', 'archer', 'knight', 'moth', 'mass', 'sentinel', 'retinue', 'guard', 'seal',
+  'duchess',
 ] as const
 export type FoeKind = (typeof foeKinds)[number]
 
@@ -114,7 +118,7 @@ type FoeStats = {
 
 export const foes: Record<FoeKind, FoeStats> = {
   // Crawls straight at the warden.
-  briarling: { health: 3, healthGrowth: 0.038, speed: 95, speedSpread: 15, speedGrowth: 0.05, reach: 18, ember: 1 },
+  briarling: { health: 3, healthGrowth: 0.03, speed: 95, speedSpread: 15, speedGrowth: 0.03, reach: 18, ember: 1 },
   // A marked briarling: slower, much tougher, and it carries a reliquary.
   marked: { health: 26, healthGrowth: 0.12, speed: 78, speedSpread: 8, speedGrowth: 0.04, reach: 22, ember: 3 },
   // Walks up, paws the ground, then charges down a marked lane.
@@ -125,21 +129,18 @@ export const foes: Record<FoeKind, FoeStats> = {
   knight: { health: 80, healthGrowth: 0.1, speed: 58, speedSpread: 6, speedGrowth: 0.02, reach: 26, ember: 6 },
   // A healer moth: frail, hangs back and mends the most wounded foe near it.
   moth: { health: 12, healthGrowth: 0.02, speed: 105, speedSpread: 10, speedGrowth: 0, reach: 16, ember: 4 },
-  // The Gardener rises only if the hero rings the bell on his grave.
-  gardener: { health: 190, healthGrowth: 0.12, speed: 26, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 10 },
+  // The four bosses before the Duchess. Until each gets its own way of
+  // fighting they are plain, very tough pursuers.
+  mass: { health: 420, healthGrowth: 0, speed: 72, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
+  sentinel: { health: 900, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
+  retinue: { health: 1500, healthGrowth: 0, speed: 66, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 16 },
+  guard: { health: 2200, healthGrowth: 0, speed: 74, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 18 },
   // The seal-flower is rooted; the Duchess walks at her own pace (see duelRule). Neither leaves embers.
   seal: { health: 140, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
-  duchess: { health: 850, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
+  duchess: { health: 1700, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
 }
 
-// The Gardener's trial is optional. From `from` seconds the bell on his grave
-// is awake; a hero who stands within `reach` pixels of it for `ring` seconds
-// calls him out. He stoops for `summon` seconds, safe from every blow, and
-// pulls `pack` briarlings out of the ground; then he straightens and the white
-// flower on his chest stays open for `open` seconds. The waves go on meanwhile.
-export const gardenerRule = { from: 240, reach: 60, ring: 1.5, summon: 2.2, open: 6, pack: 3 }
-
-// Felling the Gardener blesses one learned spell.
+// Felling a boss blesses one learned spell.
 export const blessings = {
   // Witchfire: foes within `radius` of the target take `share` of the spark.
   witchfire: { radius: 60, share: 0.5 },
@@ -153,7 +154,7 @@ export const blessings = {
   fireflies: { swarms: 2 },
 }
 
-// The duel. When the dawn bell rings the waves stop and the Widow Duchess
+// The duel. When the last boss is due the waves stop and the Widow Duchess
 // walks into the same court through the north gate. A seal-flower blooms on
 // one of the `beds` around the chapel ruins, then on the next. While a flower
 // lives her crown of vines turns every blow aside, she walks after the hero at
@@ -222,30 +223,30 @@ export const oil = { chance: 0.04 }
 export type Wave = { kind: FoeKind; from: number; count: number; to?: number; every?: number }
 
 export const waves: Wave[] = [
-  // 0:00–2:00 — briarlings alone.
-  { kind: 'briarling', from: 0, to: 120, every: 1.1, count: 1 },
+  // 0:00–3:00 — briarlings alone.
+  { kind: 'briarling', from: 0, to: 180, every: 1.1, count: 1 },
   // From 0:45 a marked briarling walks in now and then, carrying a reliquary.
-  { kind: 'marked', from: 45, to: 540, every: 80, count: 1 },
-  // 2:00–4:00 — thorn boars join.
-  { kind: 'briarling', from: 120, to: 240, every: 0.9, count: 1 },
-  { kind: 'boar', from: 120, to: 240, every: 11, count: 1 },
-  // 4:00–6:00 — court archers join.
-  { kind: 'briarling', from: 240, to: 360, every: 0.8, count: 1 },
-  { kind: 'archer', from: 240, to: 360, every: 10, count: 1 },
-  { kind: 'boar', from: 246, to: 360, every: 17, count: 1 },
-  // 6:00–8:00 — stone knights hold the front and healer moths mend them.
-  { kind: 'briarling', from: 360, to: 480, every: 0.8, count: 1 },
-  { kind: 'knight', from: 360, to: 480, every: 13, count: 1 },
-  { kind: 'moth', from: 368, to: 480, every: 24, count: 1 },
-  { kind: 'archer', from: 366, to: 480, every: 16, count: 1 },
-  // 8:00–9:00 — everything at once, briarlings in packs.
-  { kind: 'briarling', from: 480, count: 8 },
-  { kind: 'briarling', from: 480, to: 540, every: 0.65, count: 1 },
-  { kind: 'briarling', from: 500, to: 540, every: 20, count: 6 },
-  { kind: 'knight', from: 484, to: 540, every: 11, count: 1 },
-  { kind: 'moth', from: 490, to: 540, every: 22, count: 1 },
-  { kind: 'boar', from: 486, to: 540, every: 10, count: 1 },
-  { kind: 'archer', from: 482, to: 540, every: 8, count: 2 },
+  { kind: 'marked', from: 45, to: Infinity, every: 80, count: 1 },
+  // 3:00–6:00 — thorn boars join.
+  { kind: 'briarling', from: 180, to: 360, every: 0.95, count: 1 },
+  { kind: 'boar', from: 186, to: 360, every: 12, count: 1 },
+  // 6:00–9:00 — court archers join.
+  { kind: 'briarling', from: 360, to: 540, every: 0.85, count: 1 },
+  { kind: 'archer', from: 366, to: 540, every: 11, count: 1 },
+  { kind: 'boar', from: 370, to: 540, every: 18, count: 1 },
+  // 9:00–12:00 — stone knights hold the front and healer moths mend them.
+  { kind: 'briarling', from: 540, to: 720, every: 0.85, count: 1 },
+  { kind: 'knight', from: 546, to: 720, every: 14, count: 1 },
+  { kind: 'moth', from: 552, to: 720, every: 26, count: 1 },
+  { kind: 'archer', from: 550, to: 720, every: 17, count: 1 },
+  // From 12:00 until the Duchess comes — everything at once, briarlings in packs.
+  { kind: 'briarling', from: 720, count: 8 },
+  { kind: 'briarling', from: 720, to: Infinity, every: 0.7, count: 1 },
+  { kind: 'briarling', from: 740, to: Infinity, every: 22, count: 6 },
+  { kind: 'knight', from: 726, to: Infinity, every: 12, count: 1 },
+  { kind: 'moth', from: 732, to: Infinity, every: 24, count: 1 },
+  { kind: 'boar', from: 728, to: Infinity, every: 11, count: 1 },
+  { kind: 'archer', from: 724, to: Infinity, every: 9, count: 2 },
 ]
 
 export const upgradeIds = [

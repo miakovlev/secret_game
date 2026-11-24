@@ -84,7 +84,7 @@ test('switching during a run or pause preserves the HUD and the simulation', asy
   await page.clock.runFor(1300)
   await page.keyboard.up('ArrowUp')
   const time = await page.locator('#clock').innerText()
-  expect(time).not.toBe('09:00')
+  expect(time).not.toBe('03:00')
   await select(page, 'ru')
   await expect(page.locator('#clock')).toHaveText(time)
   await expect(page.locator('#panel')).toBeHidden()
@@ -345,7 +345,7 @@ test('a reliquary offers relics that fill their own slots, level up and last the
   expect(errors).toEqual([])
 })
 
-test('ringing the bell on the grave calls the Gardener, and felling him blesses one spell', async ({ page }) => {
+test('a boss comes on its minute, and felling it blesses one spell', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
   // A seasoned player: the first-run tips are behind them.
@@ -354,48 +354,54 @@ test('ringing the bell on the grave calls the Gardener, and felling him blesses 
   await page.evaluate(() => { Math.random = () => 0.05 })
   await page.getByRole('button', { name: 'Start run' }).click()
   const hint = page.locator('#hint')
+  const label = page.locator('#clock-label')
+  const clock = page.locator('#clock')
   const state = () => page.evaluate(() => {
     const { battle } = (window as any).arena
-    const lord = battle.foes.find((foe: { kind: string }) => foe.kind === 'gardener')
-    return { trial: battle.trial, mode: lord?.mode, elapsed: battle.elapsed }
+    return { boss: battle.boss?.kind, felled: battle.felled, elapsed: battle.elapsed, calm: battle.calm }
   })
   await expect(hint).toBeHidden()
-  // The fourth minute: the bell wakes, and the hint says the trial is a choice.
+  await expect(label).toHaveText('BRIAR MASS IN')
+  await expect(clock).toHaveText('03:00')
+  await expect(page.locator('footer')).toContainText('Boss')
+
+  // The last second before the third minute: the count runs out and the boss walks in.
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    battle.elapsed = 239.8
+    battle.calm = 179
     battle.armor = 1e6
   })
   await page.clock.runFor(500)
-  await expect(hint).toHaveText(/bell on the Gardener’s grave is awake.*or walk on/)
-  expect((await state()).trial).toBe('ready')
+  await expect(clock).toHaveText('00:01')
+  expect((await state()).boss).toBeUndefined()
+  await page.clock.runFor(1000)
+  expect(await state()).toMatchObject({ boss: 'mass', calm: 0 })
+  await expect(label).toHaveText('BRIAR MASS')
+  await expect(clock).toHaveText('100%')
+  await expect(hint).toHaveText('Briar Mass is in the court. Fell it to earn a blessing: the arrow points to it.')
   await select(page, 'ru')
-  await expect(hint).toHaveText(/На могиле Садовника проснулся колокольчик/)
+  await expect(label).toHaveText('ТЕРНОВЫЙ КОМ')
+  await expect(hint).toHaveText(/Терновый ком во дворе\. Победи его и получи благословение/)
   await select(page, 'en')
 
-  // Standing beside the grave long enough calls him out; the waves go on.
-  await page.evaluate(() => {
-    const { battle } = (window as any).arena
-    // The grave stands at (1780, 860) in the court.
-    battle.player = { x: 1800, y: 860 }
-  })
-  await page.clock.runFor(1000)
-  expect((await state()).trial).toBe('ready')
-  await page.clock.runFor(900)
-  expect(await state()).toMatchObject({ trial: 'fighting', mode: 'summon' })
-  await expect(hint).toHaveText('Strike the Gardener while the white flower on his chest is open.')
+  // While it lives the waves go on, and the count to the next boss stands still.
   const before = (await state()).elapsed
-  await page.clock.runFor(1000)
+  await page.clock.runFor(3000)
   expect((await state()).elapsed).toBeGreaterThan(before)
-  await expect(page.locator('footer')).toContainText('The Gardener')
-
-  // He falls once his flower is open; the blessing is offered for the one spell known.
-  for (let slice = 0; slice < 40 && (await state()).mode !== 'open'; slice++) await page.clock.runFor(200)
+  expect(await state()).toMatchObject({ boss: 'mass', calm: 0 })
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    battle.foes.find((foe: { kind: string }) => foe.kind === 'gardener').health = 0.5
+    battle.boss.health /= 2
+  })
+  await page.clock.runFor(100)
+  await expect(clock).toHaveText(/^(4\d|50)%$/)
+
+  // It falls; the blessing is offered for the one spell known.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.boss.health = 0.5
     Object.assign(battle.spells.witchfire, { range: 2000 })
-    battle.foes = battle.foes.filter((foe: { kind: string }) => foe.kind === 'gardener')
+    battle.foes = [battle.boss]
   })
   const cards = page.locator('#choices button')
   for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
@@ -404,28 +410,37 @@ test('ringing the bell on the grave calls the Gardener, and felling him blesses 
     await cards.last().click()
     for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
   }
-  await expect(page.getByRole('heading', { name: 'The Gardener’s blessing' })).toBeVisible()
-  await expect(page.locator('#status')).toHaveText('THE GRAVE FALLS QUIET')
+  await expect(page.getByRole('heading', { name: 'A blessing' })).toBeVisible()
+  await expect(page.locator('#status')).toHaveText('A BOSS HAS FALLEN')
   const blessing = cards.filter({ hasText: 'Witchfire' })
   await expect(blessing).toContainText('Blessing')
   await expect(blessing).toContainText('Each spark blooms')
   await select(page, 'ru')
-  await expect(page.getByRole('heading', { name: 'Благословение Садовника' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Благословение' })).toBeVisible()
   await expect(cards.filter({ hasText: 'Ведьмин огонь' })).toContainText('Каждая искра расцветает')
   await select(page, 'en')
   await blessing.click()
   await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire ✦')
-  expect((await state()).trial).toBe('won')
+  expect(await state()).toMatchObject({ felled: 1 })
+  expect((await state()).boss).toBeUndefined()
   await expect(hint).toBeHidden()
+  // The count to the second boss starts from three minutes.
+  await page.evaluate(() => { (window as any).arena.battle.spells.witchfire.range = 0 })
+  await page.clock.runFor(200)
+  await expect(label).toHaveText('SLEEPLESS WARDER IN')
+  await expect(clock).toHaveText(/^0(3:00|2:5\d)$/)
 
-  // The blessing is on the report, and the next run starts without it.
+  // The blessing and the boss are on the report, the Bellringer is open, and the next run starts clean.
   await page.evaluate(() => { (window as any).arena.battle.armor = 1 })
   await playRun(page, false, 150_000)
   await expect(page.locator('#title')).toHaveText('The briars prevail')
   await expect(page.locator('#message')).toContainText('Blessed: Witchfire.')
+  await expect(page.locator('#message')).toContainText('Bosses felled: 1 of 5.')
+  await expect(page.locator('#message')).toContainText('New hero: Bellringer.')
   await page.getByRole('button', { name: 'Play again' }).click()
   await expect(page.locator('#slots [role=listitem]').first()).toHaveText('Witchfire')
-  expect((await state()).trial).toBe('asleep')
+  expect(await state()).toMatchObject({ felled: 0, calm: 0 })
+  await expect(label).toHaveText('BRIAR MASS IN')
   expect(errors).toEqual([])
 })
 
@@ -447,20 +462,22 @@ test('winning opens the next difficulty and a starting relic, and the save survi
   await expect(heroes.nth(0)).toBeEnabled()
   await expect(heroes.nth(1)).toBeDisabled()
   await expect(heroes.nth(1)).toContainText('Locked. Hold out until the Duchess comes.')
-  await expect(heroes.nth(2)).toContainText('Locked. Fell the Gardener once.')
+  await expect(heroes.nth(2)).toContainText('Locked. Fell any boss once.')
   await expect(variant).toBeDisabled()
   await expect(page.locator('#variant')).toContainText('Win with this hero to start with Amber Beads.')
   await select(page, 'ru')
   await expect(page.locator('#record')).toContainText('Побед пока нет.')
-  await expect(heroes.nth(2)).toContainText('Закрыт. Победи Садовника.')
+  await expect(heroes.nth(2)).toContainText('Закрыт. Победи любого босса.')
   await select(page, 'en')
 
-  // Win the run: reach the garden with the Gardener felled on the way, then fell the Duchess.
+  // Win the run: reach the Duchess with a boss felled on the way, then fell her.
   await page.getByRole('button', { name: 'Start run' }).click()
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    battle.trial = 'won'
-    battle.elapsed = 539.5
+    battle.felled = 1
+    battle.bossIndex = 4
+    battle.calm = 179.5
+    battle.elapsed = 899.5
     battle.armor = 5
   })
   await page.clock.runFor(1500)
@@ -492,7 +509,7 @@ test('winning opens the next difficulty and a starting relic, and the save survi
   await expect(heroes.nth(1)).toBeEnabled()
   await expect(heroes.nth(2)).toBeEnabled()
   await expect(variant).toBeEnabled()
-  await expect(page.locator('#record')).toContainText(/Best time 09:\d\d · wins 1\./)
+  await expect(page.locator('#record')).toContainText(/Best time 15:\d\d · wins 1\./)
 
   // And it is still there after the page is loaded again.
   await page.reload()
@@ -501,7 +518,7 @@ test('winning opens the next difficulty and a starting relic, and the save survi
   await expect(levels.nth(1)).toHaveAttribute('aria-checked', 'true')
   await expect(heroes.nth(2)).toBeEnabled()
   await levels.nth(0).click()
-  await expect(page.locator('#record')).toContainText(/Best time 09:\d\d · wins 1\./)
+  await expect(page.locator('#record')).toContainText(/Best time 15:\d\d · wins 1\./)
   await expect(variant).toBeEnabled()
   await variant.check()
   await expect(page.locator('#relics [role=listitem]')).toHaveText(['Amber Beads 1', '—', '—'])
@@ -662,7 +679,8 @@ test('boars, archers, knights and moths fill the last minute and mark their atta
   })
   await page.evaluate(() => {
     const { battle } = (window as any).arena
-    battle.elapsed = 481.5
+    battle.elapsed = 721.5
+    battle.calm = 121
     battle.armor = 1e6
   })
   const seen = { boar: false, archer: false, knight: false, moth: false, windup: false, aim: false, arrows: false }
@@ -705,7 +723,9 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the duel'] a
       await playRun(page, true, 12_000)
       await page.evaluate((armor: number) => {
         const { battle } = (window as any).arena
-        battle.elapsed = 538.5
+        battle.bossIndex = 4
+        battle.calm = 178.5
+        battle.elapsed = 898.5
         battle.armor = armor
       }, won ? 3 : 1)
       await playRun(page, false, 2500)
@@ -776,7 +796,7 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the duel'] a
     expect(report).toContain('Spells: Witchfire')
     if (duel) expect(report).toContain(`Duel phase reached: ${won ? 3 : 1} of 3.`)
     else expect(report).not.toContain('Duel phase')
-    if (duel) expect(time).toMatch(/^09:[0-2]\d$/)
+    if (duel) expect(time).toMatch(/^15:[0-2]\d$/)
     if (won) {
       expect(report).not.toContain('The watch ended')
       await expect(page.locator('#clock')).toHaveText('0%')
@@ -794,8 +814,8 @@ for (const outcome of ['victory', 'defeat in the court', 'defeat in the duel'] a
     await page.getByRole('button', { name: 'Ещё раз' }).click()
     await expect(page.locator('#status')).toHaveText('НОЧНОЙ ДОЗОР')
     await expect(page.getByRole('heading', { name: 'У часовни' })).toBeVisible()
-    await expect(page.locator('#clock-label')).toHaveText('ДО РАССВЕТА')
-    await expect(page.locator('#clock')).toHaveText('09:00')
+    await expect(page.locator('#clock-label')).toHaveText('ТЕРНОВЫЙ КОМ ЧЕРЕЗ')
+    await expect(page.locator('#clock')).toHaveText('03:00')
     await expect(page.locator('#kills')).toHaveText('00')
     await expect(page.locator('#level')).toHaveText('1')
     await expect(page.locator('#slots [role=listitem]')).toHaveText(['Ведьмин огонь', '—', '—'])

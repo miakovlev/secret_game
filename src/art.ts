@@ -480,23 +480,23 @@ export function mothTexture() {
   })
 }
 
-// The Gardener: a stooped giant of roots and moss. The flower on his chest is
-// drawn by the scene, since it opens and closes.
-export function gardenerTexture() {
+// A boss before it gets a look of its own: a stooped giant of roots, told
+// from the others by the colour of its growth and eyes.
+export function bossTexture(growth: string, eyes: string) {
   return texture(104, 104, p => {
     p.translate(52, 52)
     circle(p, -3, 4, 42, '#17131c')
     for (let i = 0; i < 9; i++) {
       const turn = (i / 9) * Math.PI * 2
       const x = Math.cos(turn) * 34, y = Math.sin(turn) * 34
-      polygon(p, [[x*0.6,y*0.6],[x+8,y-4],[x*1.25,y*1.25],[x-6,y+6]], '#3d4a36')
+      polygon(p, [[x*0.6,y*0.6],[x+8,y-4],[x*1.25,y*1.25],[x-6,y+6]], growth)
     }
     polygon(p, [[-30,-22],[-8,-36],[18,-30],[34,-6],[30,20],[8,34],[-18,32],[-34,8]], '#4a3a2e')
     polygon(p, [[-22,-16],[-6,-26],[13,-22],[24,-4],[21,14],[5,24],[-13,23],[-25,6]], '#5f4c3a')
-    polygon(p, [[-26,-6],[-12,-18],[-2,-8],[-14,6]], '#4f6a47')
-    polygon(p, [[6,10],[20,2],[24,14],[10,22]], '#4f6a47')
+    polygon(p, [[-26,-6],[-12,-18],[-2,-8],[-14,6]], growth)
+    polygon(p, [[6,10],[20,2],[24,14],[10,22]], growth)
     circle(p, 14, -10, 9, '#3a2c26')
-    circle(p, 17, -13, 2, '#ffe08a')
-    circle(p, 19, -7, 2, '#ffe08a')
+    circle(p, 17, -13, 2, eyes)
+    circle(p, 19, -7, 2, eyes)
   })
 }

@@ -1,20 +1,18 @@
 import {
-  archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, gardenerRule, heroes, leveling, loadout, mothHeal, oil, relicIds,
+  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, mothHeal, oil, relicIds,
   relicRule,
-  relics, run, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
+  relics, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
-import type { FoeKind, HeroId, RelicId, SpellId, Stats, UpgradeId, Wave } from './content.ts'
+import type { BossId, FoeKind, HeroId, RelicId, SpellId, Stats, UpgradeId, Wave } from './content.ts'
 
 // Positions and speeds are expressed in arena pixels and seconds.
-export const DURATION = run.duration
 export const MAX_ARMOR = 5
 export const PICKUP_RADIUS = 48
 export type Point = { x: number; y: number }
 // A foe chases the warden by default. A boar goes chase → windup → charge →
 // rest; an archer goes chase → aim → volley. `timer` counts down the current
 // mode (or an archer's reload), `dir` is the locked direction of a charge or volley.
-// The Gardener alternates summon (stooped, untouchable) and open (flower bared).
-export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley' | 'summon' | 'open'
+export type FoeMode = 'chase' | 'windup' | 'charge' | 'rest' | 'aim' | 'volley'
 export type Foe = Point & {
   kind: FoeKind
   speed: number
@@ -41,8 +39,8 @@ export type BattleEvent =
   | { type: 'pickup'; at: Point }
   | { type: 'heal'; at: Point }
   | { type: 'chest'; at: Point }
-  | { type: 'bell' }
-  | { type: 'rise'; at: Point }
+  | { type: 'boss'; boss: BossId }
+  | { type: 'felled'; boss: BossId; at: Point }
   | { type: 'summon'; at: Point }
   | { type: 'bloom'; at: Point; radius: number }
   | { type: 'open'; at: Point }
@@ -69,9 +67,6 @@ export type Choice =
   | { kind: 'upgrade'; spell: SpellId; id: UpgradeId; from: number; to: number }
   | { kind: 'relic'; relic: RelicId; level: number }
   | { kind: 'bless'; spell: SpellId }
-// The Gardener's trial: his bell sleeps, wakes, is rung, and the trial ends
-// won or closed by the dawn bell.
-export type Trial = 'asleep' | 'ready' | 'fighting' | 'won' | 'closed'
 // A blessed blade swing that lingers in the air.
 export type Trail = { at: Point; facing: number; range: number; arc: number; cuts: number; beat: number }
 
@@ -104,10 +99,12 @@ export class Battle {
   // Relics held, in the order taken, with their levels; opened reliquaries awaiting a choice.
   relics: Partial<Record<RelicId, number>> = {}
   chests = 0
-  // The Gardener's trial, how long the hero has stood by the bell, blessings
-  // earned but not yet chosen, and the spells already blessed.
-  trial: Trial = 'asleep'
-  ringing = 0
+  // Bosses: how many have come, seconds counted toward the next one (the count
+  // stands still while a boss is in the court), and how many have been felled.
+  bossIndex = 0
+  calm = 0
+  felled = 0
+  // Blessings earned but not yet chosen, and the spells already blessed.
   boons = 0
   blessed: Partial<Record<SpellId, boolean>> = {}
   trails: Trail[] = []
@@ -315,7 +312,7 @@ export class Battle {
     for (const other of this.foes) {
       const lost = other.full - other.health
       const near = Math.hypot(other.x - foe.x, other.y - foe.y) < range
-      if (other.kind !== 'moth' && other.kind !== 'gardener' && near && lost > worst) {
+      if (other.kind !== 'moth' && !this.isBoss(other) && near && lost > worst) {
         patient = other
         worst = lost
       }
@@ -431,7 +428,7 @@ export class Battle {
     return this.chests > 0
   }
 
-  // Whether the cards on offer are the Gardener's blessing.
+  // Whether the cards on offer are the blessing for a felled boss.
   get blessing() {
     return !this.chests && this.boons > 0
   }
@@ -502,10 +499,6 @@ export class Battle {
   // through the north gate. Everything else stays as it is.
   private beginDuel(events: BattleEvent[]) {
     this.stage = 'duel'
-    // A trial not finished by dawn is over, and the Gardener sinks back.
-    if (this.trial !== 'won') this.trial = 'closed'
-    this.ringing = 0
-    this.foes = this.foes.filter(foe => foe.kind !== 'gardener')
     this.foes.push(makeFoe('duchess', court.gate.x, court.gate.y + 70, duelRule.speed, this.vigor('duchess')))
     this.bloom()
     this.rest()
@@ -599,62 +592,39 @@ export class Battle {
     }
   }
 
-  // Foes a spell may hit: a shielded Duchess and a stooped Gardener cannot be
-  // hurt or even aimed at.
+  // Foes a spell may hit: a shielded Duchess cannot be hurt or even aimed at.
   private targets() {
     const guarded = this.shielded
-    return this.foes.filter(foe =>
-      foe.kind === 'duchess' ? !guarded : foe.kind !== 'gardener' || foe.mode === 'open',
-    )
+    return this.foes.filter(foe => foe.kind !== 'duchess' || !guarded)
   }
 
-  // The bell wakes in the middle of the run; standing by it calls the Gardener out.
-  private bell(dt: number, events: BattleEvent[]) {
-    if (this.trial === 'asleep' && this.elapsed >= gardenerRule.from) {
-      this.trial = 'ready'
-      events.push({ type: 'bell' })
-    }
-    if (this.trial !== 'ready') return
-    const { x, y } = court.grave
-    const near = Math.hypot(this.player.x - x, this.player.y - y) < gardenerRule.reach
-    this.ringing = near ? this.ringing + dt : 0
-    if (this.ringing < gardenerRule.ring) return
-    this.trial = 'fighting'
-    this.ringing = 0
-    const stats = foes.gardener
-    const risen = makeFoe('gardener', x, y, stats.speed, this.vigor('gardener'))
-    risen.mode = 'summon'
-    risen.timer = gardenerRule.summon
-    this.foes.push(risen)
-    // He comes up right beside the hero: a moment of mercy to step away.
-    this.immunity = Math.max(this.immunity, 1.5)
-    events.push({ type: 'rise', at: { x, y } })
+  private isBoss(foe: Foe) {
+    return (bossIds as readonly string[]).includes(foe.kind)
   }
 
-  private gardener(foe: Foe, dt: number, toward: Point, events: BattleEvent[]) {
-    foe.x += toward.x * dt * foe.speed
-    foe.y += toward.y * dt * foe.speed
-    if (foe.timer > 0) return
-    if (foe.mode === 'open') {
-      foe.mode = 'summon'
-      foe.timer = gardenerRule.summon
-      return
-    }
-    // He pulls briarlings out of the ground around him, then straightens.
-    const stats = foes.briarling
-    for (let i = 0; i < gardenerRule.pack; i++) {
-      const turn = (i * 2 * Math.PI) / gardenerRule.pack + Math.PI / 4
-      this.foes.push(makeFoe(
-        'briarling',
-        foe.x + Math.cos(turn) * 52,
-        foe.y + Math.sin(turn) * 52,
-        stats.speed + this.random() * stats.speedSpread + this.elapsed * stats.speedGrowth,
-        this.vigor('briarling'),
-      ))
-    }
-    foe.mode = 'open'
-    foe.timer = gardenerRule.open
-    events.push({ type: 'summon', at: { x: foe.x, y: foe.y } })
+  // The boss now in the court, if any.
+  get boss() {
+    return this.foes.find(foe => this.isBoss(foe))
+  }
+
+  // The boss that comes next, and the seconds left until then. Undefined once
+  // the last one has come.
+  get nextBoss(): { boss: BossId; inSeconds: number } | undefined {
+    const boss = bossIds[this.bossIndex]
+    return boss && { boss, inSeconds: Math.max(0, bossRule.every - this.calm) }
+  }
+
+  // Counts toward the next boss while the court is free of one, and brings it in.
+  private trials(dt: number, events: BattleEvent[]) {
+    if (this.boss || this.bossIndex >= bossIds.length) return
+    this.calm += dt
+    if (this.calm < bossRule.every) return
+    this.calm = 0
+    const boss = bossIds[this.bossIndex++]
+    events.push({ type: 'boss', boss })
+    // The Duchess ends the waves; the others walk in on top of them.
+    if (boss === 'duchess') this.beginDuel(events)
+    else this.spawn(boss, 1)
   }
 
   private strike(foe: Foe, damage: number, events: BattleEvent[]) {
@@ -677,6 +647,8 @@ export class Battle {
     this.kills++
     events.push({ type: 'kill', at: fallen })
     if (foe.kind === 'duchess') {
+      this.felled++
+      events.push({ type: 'felled', boss: 'duchess', at: fallen })
       this.phase = 'won'
     } else if (foe.kind === 'seal') {
       // The crown opens and any lash already raised is dropped.
@@ -685,10 +657,18 @@ export class Battle {
       events.push({ type: 'crown', open: true })
     } else {
       this.embers.push({ ...fallen, value: foes[foe.kind].ember })
-      if (foe.kind === 'gardener') {
-        // The trial is won: one blessing, once.
-        this.trial = 'won'
-        this.boons++
+      if (this.isBoss(foe)) {
+        // A felled boss blesses one learned spell; with every learned spell
+        // already blessed it leaves a reliquary instead.
+        this.felled++
+        events.push({ type: 'felled', boss: foe.kind as BossId, at: fallen })
+        const waiting = this.loadout.filter(spell => !this.blessed[spell]).length
+        if (waiting > this.boons) {
+          this.boons++
+        } else {
+          this.reliquaries.push(fallen)
+          events.push({ type: 'chest', at: fallen })
+        }
       }
       if (foe.kind === 'marked') {
         this.reliquaries.push(fallen)
@@ -754,7 +734,7 @@ export class Battle {
       events.push({ type: 'toll', at, radius: stats.range })
       for (const foe of struck) {
         // Rooted and heavy things take the blow but stay where they are.
-        if (!foes[foe.kind].speed || foe.kind === 'gardener') continue
+        if (!foes[foe.kind].speed || this.isBoss(foe)) continue
         const distance = reach(foe) || 1
         const push = stats.knockback * gift.knockback
         foe.x += ((foe.x - at.x) / distance) * push
@@ -811,7 +791,7 @@ export class Battle {
         // The warden's gift: every few sparks one leaps on to a neighbour.
         this.sparks++
         if (this.blessed.witchfire) {
-          // The Gardener's blessing: the spark blooms and scorches the neighbours.
+          // Blessed: the spark blooms and scorches the neighbours.
           const { radius, share } = blessings.witchfire
           events.push({ type: 'bloom', at: { x: hit.x, y: hit.y }, radius })
           for (const foe of open) {
@@ -856,7 +836,7 @@ export class Battle {
     const events: BattleEvent[] = []
     if (this.phase !== 'playing') return events
     this.elapsed += dt
-    if (this.stage === 'court' && this.elapsed >= DURATION) this.beginDuel(events)
+    if (this.stage === 'court') this.trials(dt, events)
     const area = court
     const length = Math.hypot(dx, dy)
     const pace = heroes[this.hero].speed * (1 + this.rank('boots') * relics.boots.amount)
@@ -880,7 +860,6 @@ export class Battle {
 
     // The schedule runs on the clock of the run, so a pause never shifts it
     // and every group enters exactly once.
-    if (this.stage === 'court') this.bell(dt, events)
     if (this.stage === 'duel') this.duel(dt, events)
     else this.schedule.forEach((wave, index) => {
       const due = bursts(wave, this.elapsed)
@@ -905,8 +884,6 @@ export class Battle {
         this.archer(foe, dt, distance, toward, events)
       } else if (foe.kind === 'moth') {
         this.moth(foe, dt, distance, toward, events)
-      } else if (foe.kind === 'gardener') {
-        this.gardener(foe, dt, toward, events)
       } else {
         const travel = Math.min(distance, dt * foe.speed)
         foe.x += toward.x * travel
