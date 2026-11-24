@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bossIds, bossRule, massRule, retinueRule, warderRule, spellIds, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
+import { bossIds, bossRule, guardRule, massRule, retinueRule, warderRule, spellIds, archerVolley, blessings, boarCharge, court, difficulties, duelRule, fireflyRule, foes, heroes, heroIds, loadout, mothHeal, relicIds, relicRule,
   relics, seedRule, oil, waves, shownValue, spells, upgraded, upgradeIds, upgrades } from '../src/content.ts'
 
 const witchfire = spells.witchfire
@@ -2055,7 +2055,7 @@ test('the bosses come in a fixed order, three minutes apart, the Duchess last', 
   assert.equal(b.bossIndex, 1)
   assert.equal(b.stage, 'court')
   // It walks in from beyond the view like any other foe.
-  for (const id of ['mass', 'sentinel', 'retinue', 'guard']) {
+  for (const id of ['mass', 'sentinel', 'retinue']) {
     assert.ok(foes[id].health > 10 * foes.knight.health / 4)
     assert.ok(foes[id].speed > 0)
   }
@@ -2131,7 +2131,7 @@ test('a felled boss blesses one learned spell, and leaves a reliquary when none 
     learn(b, 'toll')
     b.timers.toll = 9
     Object.assign(b.blessed, blessed)
-    const boss = makeFoe('guard', b.player.x + 80, b.player.y, 0, 0.1)
+    const boss = makeFoe('mass', b.player.x + 80, b.player.y, 0, 0.1)
     b.foes = [boss]
     b.spells.witchfire.range = 2000
     const events = b.step(0, 0, 0)
@@ -2141,7 +2141,7 @@ test('a felled boss blesses one learned spell, and leaves a reliquary when none 
   assert.deepEqual(first.events.map(event => event.type), ['shot', 'kill', 'felled'])
   assert.equal(first.b.boons, 1)
   assert.deepEqual(first.b.reliquaries, [])
-  assert.equal(first.b.embers.at(-1).value, foes.guard.ember)
+  assert.equal(first.b.embers.at(-1).value, foes.mass.ember)
   // The blessing is offered on the next step, one card per learned spell.
   first.b.embers = []
   first.b.spells.witchfire.range = 0
@@ -2686,4 +2686,222 @@ test('a shard thrown toward a wall stays inside the court', () => {
   for (const shard of shards(far.b)) {
     assert.ok(shard.x <= court.width - 22 && shard.y <= court.height - 22)
   }
+})
+
+// --- Step 5.5: the Candle Guard.
+
+// The Candle Guard has just taken its posts around a warden in the middle of the court; no waves.
+function posted(random = () => 0.5) {
+  const b = before(3, random)
+  b.schedule.splice(0)
+  b.armor = MAX_ARMOR
+  b.immunity = 1e9
+  const events = []
+  for (let i = 0; i < 6 && !b.boss; i++) events.push(...b.step(1 / 60, 0, 0))
+  const ring = b.foes.filter(foe => foe.kind === 'guard')
+  return { b, ring, events }
+}
+
+test('five archers of the Candle Guard take their posts in a ring around the warden and never move', () => {
+  const { b, ring, events } = posted()
+  assert.equal(guardRule.count, 5)
+  assert.equal(ring.length, 5)
+  assert.deepEqual(events.filter(event => event.type === 'boss'), [{ type: 'boss', boss: 'guard' }])
+  assert.equal(events.filter(event => event.type === 'summon').length, 5)
+  assert.deepEqual(ring.map(foe => foe.tier), [0, 1, 2, 3, 4])
+  const centre = { ...b.player }
+  for (const foe of ring) {
+    assert.ok(Math.abs(Math.hypot(foe.x - centre.x, foe.y - centre.y) - guardRule.radius) < 1e-6)
+    assert.equal(foe.health, foes.guard.health)
+    assert.equal(foe.speed, 0)
+  }
+  // The first stands due north, the rest follow clockwise at equal steps.
+  assert.ok(Math.abs(ring[0].x - centre.x) < 1e-6 && ring[0].y < centre.y)
+  assert.ok(ring[1].x > centre.x && ring[4].x < centre.x)
+  // The ring fits in the view around a warden standing at its centre.
+  assert.ok(guardRule.radius < court.view.height / 2)
+  const places = ring.map(foe => [foe.x, foe.y])
+  for (let i = 0; i < 20 * 60; i++) b.step(1 / 60, i % 120 < 60 ? 1 : -1, 0)
+  assert.deepEqual(ring.map(foe => [foe.x, foe.y]), places)
+
+  // Near a wall the whole ring is moved inside the court.
+  for (const corner of [{ x: 30, y: 30 }, { x: court.width - 30, y: court.height - 30 }]) {
+    const b = before(3)
+    b.schedule.splice(0)
+    b.immunity = 1e9
+    Object.assign(b.player, corner)
+    for (let i = 0; i < 6 && !b.boss; i++) b.step(1 / 60, 0, 0)
+    const ring = b.foes.filter(foe => foe.kind === 'guard')
+    assert.equal(ring.length, 5)
+    for (const foe of ring) {
+      assert.ok(foe.x >= guardRule.margin - 1e-6 && foe.x <= court.width - guardRule.margin + 1e-6)
+      assert.ok(foe.y >= guardRule.margin - 1e-6 && foe.y <= court.height - guardRule.margin + 1e-6)
+    }
+  }
+})
+
+test('exactly one archer is lit, the mark passes round the ring in order, and the fifth fells the boss', () => {
+  const { b, ring } = posted()
+  Object.assign(b.spells.witchfire, { range: 4000, damage: 1e6, cooldown: 1e9 })
+  const order = []
+  for (let turn = 0; turn < 5; turn++) {
+    assert.equal(b.lit, ring[turn])
+    assert.equal(b.foes.filter(foe => foe.kind === 'guard').length, 5 - turn)
+    assert.deepEqual([b.felled, b.boons], [0, 0])
+    assert.ok(Math.abs(b.bossLeft - (5 - turn) / 5) < 1e-9)
+    b.timers.witchfire = 0
+    b.sparks = 0
+    const events = b.step(0, 0, 0)
+    // The spark goes to the lit archer, wherever the nearer ones stand.
+    const shot = events.find(event => event.type === 'shot')
+    assert.deepEqual(shot.to, { x: ring[turn].x, y: ring[turn].y })
+    assert.equal(events.filter(event => event.type === 'kill').length, 1)
+    assert.equal(events.filter(event => event.type === 'felled').length, turn === 4 ? 1 : 0)
+    order.push(ring[turn].tier)
+  }
+  assert.deepEqual(order, [0, 1, 2, 3, 4])
+  assert.equal(b.lit, undefined)
+  assert.equal(b.boss, undefined)
+  assert.deepEqual([b.felled, b.boons, b.kills], [1, 1, 5])
+  assert.equal(b.bossLeft, 0)
+  assert.equal(b.embers.reduce((sum, ember) => sum + ember.value, 0), 5 * foes.guard.ember)
+})
+
+test('spells neither aim at nor wound an archer whose candle is out, and every spell reaches the lit one', () => {
+  for (const spell of spellIds) {
+    // Standing beside an unlit archer, far from the lit one: nothing happens to it.
+    const { b, ring } = posted()
+    b.spells.witchfire.range = 0
+    learn(b, spell)
+    Object.assign(b.spells[spell], { damage: 7, range: 90, cooldown: 0.05 })
+    b.blessed[spell] = true
+    const unlit = ring[2]
+    Object.assign(b.player, { x: unlit.x - 40, y: unlit.y })
+    const events = []
+    // Pace to and fro, so seeds fall and the blade swings both ways.
+    const pace = i => (Math.floor(i / 7) % 2 ? 1 : -1)
+    for (let i = 0; i < 90; i++) events.push(...b.step(1 / 60, pace(i), 0))
+    for (const foe of ring) assert.equal(foe.health, foe.full, spell)
+    assert.deepEqual(events.filter(event => ['shot', 'kill', 'burst', 'sting', 'chain', 'bloom'].includes(event.type)), [], spell)
+
+    // Beside the lit one the same spell wears it down, and only it.
+    const lit = ring[0]
+    Object.assign(b.player, { x: lit.x - 40, y: lit.y })
+    b.seeds = []
+    for (let i = 0; i < 90; i++) b.step(1 / 60, pace(i), 0)
+    assert.ok(lit.health < lit.full, spell)
+    for (const foe of ring.slice(1)) assert.equal(foe.health, foe.full, spell)
+  }
+  // A blow thrown straight at an unlit archer is turned aside too.
+  const { b, ring } = posted()
+  b.strike(ring[3], 1e6, [])
+  assert.equal(ring[3].health, ring[3].full)
+  assert.equal(b.foes.length, 5)
+})
+
+test('the archers shoot in turn round the ring, each bolt after its warning, down the marked line', () => {
+  const { b, ring } = posted()
+  b.spells.witchfire.range = 0
+  b.immunity = 0
+  const log = []
+  const was = new Map()
+  for (let i = 0; i < Math.round((guardRule.opening + 7 * guardRule.turn) * 240); i++) {
+    const events = b.step(1 / 240, 0, 0)
+    // An archer that has just begun to aim.
+    for (const foe of ring) {
+      if (foe.mode === 'aim' && was.get(foe) !== 'aim') log.push({ type: 'aim', tier: foe.tier, at: b.elapsed, dir: { ...foe.dir } })
+      was.set(foe, foe.mode)
+    }
+    for (const event of events) {
+      if (event.type !== 'arrow') continue
+      const from = ring.find(foe => foe.x === event.at.x && foe.y === event.at.y)
+      log.push({ type: 'bolt', tier: from.tier, at: b.elapsed, arrow: { ...b.arrows.at(-1) } })
+    }
+    b.armor = MAX_ARMOR
+    b.immunity = 0
+  }
+  const aims = log.filter(entry => entry.type === 'aim')
+  const bolts = log.filter(entry => entry.type === 'bolt')
+  assert.deepEqual(aims.slice(0, 7).map(entry => entry.tier), [0, 1, 2, 3, 4, 0, 1])
+  assert.ok(bolts.length >= 6)
+  bolts.forEach((bolt, index) => {
+    const aim = aims[index]
+    assert.equal(bolt.tier, aim.tier)
+    // The bolt follows its warning by the windup, and flies down the warned line.
+    assert.ok(Math.abs(bolt.at - aim.at - guardRule.windup) < 0.02)
+    const speed = Math.hypot(bolt.arrow.vx, bolt.arrow.vy)
+    assert.ok(Math.abs(speed - guardRule.boltSpeed) < 1e-6)
+    assert.ok(Math.abs(bolt.arrow.vx / speed - aim.dir.x) < 1e-9 && Math.abs(bolt.arrow.vy / speed - aim.dir.y) < 1e-9)
+    assert.ok(Math.abs(bolt.arrow.life - guardRule.boltReach / guardRule.boltSpeed) < 0.01)
+  })
+  for (let i = 1; i < aims.length; i++) assert.ok(Math.abs(aims[i].at - aims[i - 1].at - guardRule.turn) < 0.02)
+  // The first warning waits for the opening, so the warden has time to look around.
+  assert.ok(guardRule.opening > guardRule.turn)
+  // A bolt reaches across the whole ring.
+  assert.ok(guardRule.boltReach > 2 * guardRule.radius)
+
+  // A warden who stands still is struck; one who steps off the line is not.
+  const still = posted()
+  still.b.spells.witchfire.range = 0
+  still.b.immunity = 0
+  for (let i = 0; i < 6 * 60 && still.b.armor === MAX_ARMOR; i++) still.b.step(1 / 60, 0, 0)
+  assert.equal(still.b.armor, MAX_ARMOR - 1)
+  const moved = posted()
+  moved.b.spells.witchfire.range = 0
+  moved.b.immunity = 0
+  let fired = 0
+  for (let i = 0; i < 6 * 60 && !fired; i++) {
+    const aiming = moved.ring.find(foe => foe.mode === 'aim')
+    // Step across the warned line.
+    const events = aiming ? moved.b.step(1 / 60, -aiming.dir.y, aiming.dir.x) : moved.b.step(1 / 60, 0, 0)
+    fired += events.filter(event => event.type === 'arrow').length
+  }
+  for (let i = 0; i < 60; i++) {
+    const aiming = moved.ring.find(foe => foe.mode === 'aim')
+    moved.b.step(1 / 60, aiming ? -aiming.dir.y : 0, aiming ? aiming.dir.x : 0)
+    if (moved.b.arrows.length === 0) break
+  }
+  assert.equal(moved.b.armor, MAX_ARMOR)
+})
+
+test('a fallen archer misses its turn, and the rest keep shooting in order', () => {
+  const { b, ring } = posted()
+  b.spells.witchfire.range = 0
+  // Two posts stand empty.
+  b.foes = b.foes.filter(foe => foe.tier !== 0 && foe.tier !== 3)
+  assert.equal(b.lit, ring[1])
+  const turns = []
+  const was = new Map()
+  for (let i = 0; i < Math.round((guardRule.opening + 6 * guardRule.turn) * 120); i++) {
+    b.step(1 / 120, 0, 0)
+    for (const foe of ring) {
+      if (foe.mode === 'aim' && was.get(foe) !== 'aim') turns.push(foe.tier)
+      was.set(foe, foe.mode)
+    }
+  }
+  assert.deepEqual(turns.slice(0, 6), [1, 2, 4, 1, 2, 4])
+  // With the court empty of them, nothing more is loosed.
+  b.foes = []
+  b.arrows = []
+  for (let i = 0; i < 300; i++) assert.deepEqual(b.step(1 / 60, 0, 0), [])
+  assert.deepEqual(b.arrows, [])
+})
+
+test('the health shown for the Candle Guard is what is left of all five', () => {
+  const { b, ring } = posted()
+  assert.equal(b.bossLeft, 1)
+  ring[0].health = ring[0].full / 2
+  assert.ok(Math.abs(b.bossLeft - 0.9) < 1e-9)
+  ring[1].health = -3
+  assert.ok(Math.abs(b.bossLeft - 0.7) < 1e-9)
+})
+
+test('an archer aiming at a warden standing on its post looses a bolt that goes nowhere, not astray', () => {
+  const { b, ring } = posted()
+  b.spells.witchfire.range = 0
+  Object.assign(b.player, { x: ring[0].x, y: ring[0].y })
+  for (let i = 0; i < 300 && ring[0].mode !== 'aim'; i++) b.step(1 / 60, 0, 0)
+  assert.deepEqual(ring[0].dir, { x: 0, y: 0 })
+  for (let i = 0; i < 60 && !b.arrows.length; i++) b.step(1 / 60, 0, 0)
+  for (const arrow of b.arrows) assert.ok(Number.isFinite(arrow.x) && Number.isFinite(arrow.vx))
 })

@@ -553,23 +553,29 @@ export function retinueTexture() {
   })
 }
 
-// A boss before it gets a look of its own: a stooped giant of roots, told
-// from the others by the colour of its growth and eyes.
-export function bossTexture(growth: string, eyes: string) {
-  return texture(104, 104, p => {
-    p.translate(52, 52)
-    circle(p, -3, 4, 42, '#17131c')
-    for (let i = 0; i < 9; i++) {
-      const turn = (i / 9) * Math.PI * 2
-      const x = Math.cos(turn) * 34, y = Math.sin(turn) * 34
-      polygon(p, [[x*0.6,y*0.6],[x+8,y-4],[x*1.25,y*1.25],[x-6,y+6]], growth)
-    }
-    polygon(p, [[-30,-22],[-8,-36],[18,-30],[34,-6],[30,20],[8,34],[-18,32],[-34,8]], '#4a3a2e')
-    polygon(p, [[-22,-16],[-6,-26],[13,-22],[24,-4],[21,14],[5,24],[-13,23],[-25,6]], '#5f4c3a')
-    polygon(p, [[-26,-6],[-12,-18],[-2,-8],[-14,6]], growth)
-    polygon(p, [[6,10],[20,2],[24,14],[10,22]], growth)
-    circle(p, 14, -10, 9, '#3a2c26')
-    circle(p, 17, -13, 2, eyes)
-    circle(p, 19, -7, 2, eyes)
+// An archer of the Candle Guard: a hooded bowman with a tall candle on his
+// back. The scene draws the flame, since only one candle burns at a time.
+export function guardTexture() {
+  return texture(72, 72, p => {
+    p.translate(36, 36)
+    circle(p, -2, 3, 26, '#17131c')
+    polygon(p, [[-20,-16],[-4,-22],[10,-14],[12,0],[10,14],[-4,22],[-20,16],[-24,0]], '#5a3d22')
+    polygon(p, [[-14,-11],[-3,-16],[7,-10],[8,0],[7,10],[-3,16],[-14,11],[-17,0]], '#8a5a2a')
+    circle(p, 0, 0, 9, '#2a1d14')
+    circle(p, 4, -3, 1.8, '#ffe08a')
+    circle(p, 4, 3, 1.8, '#ffe08a')
+    // The bow, held across.
+    p.strokeStyle = '#d9b06a'
+    p.lineWidth = 3
+    p.beginPath()
+    p.arc(4, 0, 24, -1.1, 1.1)
+    p.stroke()
+    p.strokeStyle = '#f4f1e6'
+    p.lineWidth = 1
+    p.beginPath()
+    p.moveTo(4 + 24 * Math.cos(1.1), 24 * Math.sin(1.1)); p.lineTo(4 + 24 * Math.cos(1.1), -24 * Math.sin(1.1))
+    p.stroke()
+    // The candle on his back.
+    box(p, -24, -4, 10, 8, '#f4ecd2')
   })
 }

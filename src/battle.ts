@@ -1,5 +1,5 @@
 import {
-  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, heroes, leveling, loadout, massRule, mothHeal, retinueRule, warderRule, oil, relicIds,
+  archerVolley, blessings, boarCharge, bossIds, bossRule, court, difficulties, duelRule, fireflyRule, foes, guardRule, heroes, leveling, loadout, massRule, mothHeal, retinueRule, warderRule, oil, relicIds,
   relicRule,
   relics, seedRule, shownValue, spellIds, spells, upgraded, upgradeIds, upgrades, waves,
 } from './content.ts'
@@ -30,6 +30,7 @@ export type Foe = Point & {
   // How many times the Sleepless Warder has fallen.
   falls: number
   // The generation of a shard of the Stone Retinue: 0 is the great guardian.
+  // For an archer of the Candle Guard, its place in the ring.
   tier: number
 }
 export type Arrow = Point & { vx: number; vy: number; life: number }
@@ -150,6 +151,9 @@ export class Battle {
   patchIn = duelRule.patch.every
   summonIn = duelRule.summon.every
   summons = 0
+  // The Candle Guard: seconds until the next archer aims, and whose turn it is.
+  volleyIn = 0
+  volleyTurn = 0
   // Briar patches: `warn` counts down to the eruption, then `life` to the end.
   patches: (Point & { warn: number; life: number })[] = []
   // How many groups each wave of the schedule has already sent in.
@@ -605,7 +609,10 @@ export class Battle {
   // Foes a spell may hit: a shielded Duchess cannot be hurt or even aimed at.
   private targets() {
     const guarded = this.shielded
-    return this.foes.filter(foe => foe.mode !== 'down' && (foe.kind !== 'duchess' || !guarded))
+    const lit = this.lit
+    return this.foes.filter(
+      foe => foe.mode !== 'down' && (foe.kind !== 'duchess' || !guarded) && (foe.kind !== 'guard' || foe === lit),
+    )
   }
 
   // How close a foe must be to wound the warden. The Briar Mass grows.
@@ -619,6 +626,11 @@ export class Battle {
   get bossLeft() {
     const boss = this.boss
     if (!boss) return 0
+    if (boss.kind === 'guard') {
+      let standing = 0
+      for (const foe of this.foes) if (foe.kind === 'guard') standing += Math.max(0, foe.health)
+      return standing / (boss.full * guardRule.count)
+    }
     if (boss.kind !== 'retinue') return Math.max(0, boss.health) / boss.full
     const { tiers } = retinueRule
     // The health of everything a shard of this generation will break into.
@@ -677,6 +689,65 @@ export class Battle {
     events.push({ type: 'absorb', from: { x: meal.x, y: meal.y }, to: { x: mass.x, y: mass.y } })
   }
 
+  // The archers of the Candle Guard take their posts around the warden. The
+  // ring is moved inward where a wall would cut it.
+  private post(events: BattleEvent[]) {
+    const { count, radius, margin, opening } = guardRule
+    const keep = radius + margin
+    const cx = Math.max(keep, Math.min(court.width - keep, this.player.x))
+    const cy = Math.max(keep, Math.min(court.height - keep, this.player.y))
+    for (let i = 0; i < count; i++) {
+      const angle = -Math.PI / 2 + (i / count) * Math.PI * 2
+      const archer = makeFoe(
+        'guard', cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, 0, this.vigor('guard'),
+      )
+      archer.tier = i
+      this.foes.push(archer)
+      events.push({ type: 'summon', at: { x: archer.x, y: archer.y } })
+    }
+    this.volleyIn = opening
+    this.volleyTurn = 0
+  }
+
+  // The one archer of the Candle Guard that can be hurt now: the first in the ring still standing.
+  get lit() {
+    return this.foes.find(foe => foe.kind === 'guard')
+  }
+
+  // The archers shoot in turn around the ring. One aims along a marked line,
+  // then looses a single bolt down it.
+  private guard(dt: number, events: BattleEvent[]) {
+    const archers = this.foes.filter(foe => foe.kind === 'guard')
+    if (!archers.length) return
+    for (const archer of archers) {
+      if (archer.mode !== 'aim' || archer.timer > 0) continue
+      archer.mode = 'chase'
+      this.arrows.push({
+        x: archer.x,
+        y: archer.y,
+        vx: archer.dir.x * guardRule.boltSpeed,
+        vy: archer.dir.y * guardRule.boltSpeed,
+        life: guardRule.boltReach / guardRule.boltSpeed,
+      })
+      events.push({ type: 'arrow', at: { x: archer.x, y: archer.y } })
+    }
+    this.volleyIn -= dt
+    if (this.volleyIn > 0) return
+    this.volleyIn = guardRule.turn
+    // The next post in the ring that still has its archer.
+    for (let step = 0; step < guardRule.count; step++) {
+      const place = (this.volleyTurn + step) % guardRule.count
+      const archer = archers.find(foe => foe.tier === place)
+      if (!archer) continue
+      const distance = Math.hypot(this.player.x - archer.x, this.player.y - archer.y) || 1
+      archer.mode = 'aim'
+      archer.timer = guardRule.windup
+      archer.dir = { x: (this.player.x - archer.x) / distance, y: (this.player.y - archer.y) / distance }
+      this.volleyTurn = place + 1
+      break
+    }
+  }
+
   private isBoss(foe: Foe) {
     return (bossIds as readonly string[]).includes(foe.kind)
   }
@@ -703,6 +774,7 @@ export class Battle {
     events.push({ type: 'boss', boss })
     // The Duchess ends the waves; the others walk in on top of them.
     if (boss === 'duchess') this.beginDuel(events)
+    else if (boss === 'guard') this.post(events)
     else this.spawn(boss, 1)
   }
 
@@ -710,7 +782,8 @@ export class Battle {
     // One cast can name the same foe twice (a spark blooms on it, then leaps
     // to it); a foe already felled takes no second blow.
     // Nor does the Sleepless Warder while it lies between lives.
-    if (!this.foes.includes(foe) || foe.mode === 'down') return
+    // An archer of the Candle Guard whose candle is out takes no blow either.
+    if (!this.foes.includes(foe) || foe.mode === 'down' || (foe.kind === 'guard' && foe !== this.lit)) return
     foe.health -= damage
     if (foe.kind === 'sentinel' && foe.health <= 0 && foe.falls < warderRule.lives - 1) {
       // However hard the blow, it costs the Warder one life.
@@ -748,7 +821,10 @@ export class Battle {
       const shard = foe.kind === 'retinue'
       this.embers.push({ ...fallen, value: shard ? retinueRule.tiers[foe.tier].ember : foes[foe.kind].ember })
       // The Stone Retinue is felled with its last shard, not its first.
-      const standing = shard && (this.shatter(foe, events) > 0 || this.foes.some(other => other.kind === 'retinue'))
+      // So is the Candle Guard, with its last archer.
+      const standing = shard
+        ? this.shatter(foe, events) > 0 || this.foes.some(other => other.kind === 'retinue')
+        : this.foes.some(other => other.kind === 'guard')
       if (this.isBoss(foe) && !standing) {
         // A felled boss blesses one learned spell; with every learned spell
         // already blessed it leaves a reliquary instead.
@@ -997,6 +1073,7 @@ export class Battle {
       if (remaining < this.reach(foe)) this.wound(this.bite(foe))
     }
     this.feed(events)
+    this.guard(dt, events)
     this.arrows = this.arrows.filter(arrow => {
       arrow.x += arrow.vx * dt
       arrow.y += arrow.vy * dt

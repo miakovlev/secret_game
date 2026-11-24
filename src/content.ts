@@ -133,11 +133,11 @@ export const foes: Record<FoeKind, FoeStats> = {
   // The Sleepless Warder falls and rises again (see warderRule); its health is for one life.
   // The Stone Retinue comes as one great guardian and breaks apart (see retinueRule,
   // which holds the numbers of every generation; these are the first one's).
-  // The Candle Guard is a plain, very tough pursuer until it gets its own way of fighting.
+  // The Candle Guard is five rooted archers (see guardRule); these numbers are for one of them.
   mass: { health: 340, healthGrowth: 0, speed: 72, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 12 },
   sentinel: { health: 380, healthGrowth: 0, speed: 78, speedSpread: 0, speedGrowth: 0, reach: 32, ember: 14 },
   retinue: { health: 900, healthGrowth: 0, speed: 62, speedSpread: 0, speedGrowth: 0, reach: 38, ember: 8 },
-  guard: { health: 2200, healthGrowth: 0, speed: 74, speedSpread: 0, speedGrowth: 0, reach: 34, ember: 18 },
+  guard: { health: 520, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 24, ember: 5 },
   // The seal-flower is rooted; the Duchess walks at her own pace (see duelRule). Neither leaves embers.
   seal: { health: 140, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 16, ember: 0 },
   duchess: { health: 1700, healthGrowth: 0, speed: 0, speedSpread: 0, speedGrowth: 0, reach: 36, ember: 0 },
@@ -173,6 +173,23 @@ export const retinueRule = {
   ],
   fling: 0.3,
   flingSpeed: 260,
+}
+
+// The Candle Guard: `count` archers take their posts in a ring of `radius`
+// around the warden and never move. Only the one whose candle is lit can be
+// aimed at or hurt; when it is banished the next in the ring is lit. They
+// shoot in turn, one every `turn` seconds after the first `opening`: the
+// archer aims for `windup` seconds along a marked line, then looses one bolt.
+export const guardRule = {
+  count: 5,
+  radius: 215,
+  // How far the ring is kept from the walls.
+  margin: 40,
+  opening: 1.6,
+  turn: 0.65,
+  windup: 0.85,
+  boltSpeed: 300,
+  boltReach: 620,
 }
 
 // Felling a boss blesses one learned spell.

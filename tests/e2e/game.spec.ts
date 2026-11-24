@@ -603,6 +603,83 @@ test('the Stone Retinue breaks into three and then eighteen, and is felled with 
   expect(errors).toEqual([])
 })
 
+test('the Candle Guard stands in a ring, only the lit archer can be hurt, and the fifth fells the boss', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+  await seedSave(page, { ...everything, heroes: ['warden'], variants: [] })
+  await frozenClock(page)
+  await page.evaluate(() => { Math.random = () => 0.05 })
+  await page.getByRole('button', { name: 'Start run' }).click()
+  const hint = page.locator('#hint')
+  const label = page.locator('#clock-label')
+  const clock = page.locator('#clock')
+  const state = () => page.evaluate(() => {
+    const { battle } = (window as any).arena
+    const ring = battle.foes.filter((foe: any) => foe.kind === 'guard')
+    return {
+      posts: ring.map((foe: any) => foe.tier), lit: battle.lit?.tier, hurt: ring.filter((foe: any) => foe.health < foe.full).map((foe: any) => foe.tier),
+      aiming: ring.filter((foe: any) => foe.mode === 'aim').length, bolts: battle.arrows.length, felled: battle.felled, boons: battle.boons,
+    }
+  })
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    battle.bossIndex = 3
+    battle.calm = 179.9
+    battle.immunity = 1e6
+    battle.schedule.splice(0)
+    battle.spells.witchfire.range = 0
+  })
+  await page.clock.runFor(500)
+  expect(await state()).toMatchObject({ posts: [0, 1, 2, 3, 4], lit: 0, hurt: [] })
+  await expect(label).toHaveText('CANDLE GUARD ×5')
+  await expect(clock).toHaveText('100%')
+  await expect(hint).toHaveText(/The Candle Guard stands in a ring and shoots in turn\. Only the archer with the lit candle can be hurt/)
+  await select(page, 'ru')
+  await expect(label).toHaveText('СВЕЧНОЙ КАРАУЛ ×5')
+  await expect(hint).toHaveText(/Свечной караул стоит кольцом и стреляет по очереди/)
+  await select(page, 'en')
+
+  // They warn and shoot in turn.
+  let warned = false, loosed = false
+  for (let slice = 0; slice < 40 && !(warned && loosed); slice++) {
+    await page.clock.runFor(100)
+    const now = await state()
+    warned ||= now.aiming > 0
+    loosed ||= now.bolts > 0
+  }
+  expect({ warned, loosed }).toEqual({ warned: true, loosed: true })
+
+  // A spark that reaches the whole ring wounds only the lit archer.
+  await page.evaluate(() => {
+    const { battle } = (window as any).arena
+    Object.assign(battle.spells.witchfire, { range: 4000, damage: 10, cooldown: 0.2 })
+  })
+  await page.clock.runFor(1000)
+  expect(await state()).toMatchObject({ posts: [0, 1, 2, 3, 4], lit: 0, hurt: [0] })
+
+  // Felled one by one, the mark passes round the ring.
+  for (let turn = 1; turn <= 4; turn++) {
+    await page.evaluate(() => {
+      const { battle } = (window as any).arena
+      battle.lit.health = 1
+    })
+    await page.clock.runFor(500)
+    const now = await state()
+    expect(now.lit).toBe(turn)
+    expect(now).toMatchObject({ felled: 0, boons: 0 })
+    await expect(label).toHaveText(`CANDLE GUARD ×${5 - turn}`)
+  }
+  await page.evaluate(() => { (window as any).arena.battle.lit.health = 1 })
+  for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  for (let turn = 0; turn < 8 && !(await page.locator('#cards-title').innerText()).includes('blessing'); turn++) {
+    await page.locator('#choices button').last().click()
+    for (let slice = 0; slice < 20 && await page.locator('#cards').isHidden(); slice++) await page.clock.runFor(100)
+  }
+  await expect(page.getByRole('heading', { name: 'A blessing' })).toBeVisible()
+  expect(await state()).toMatchObject({ posts: [], felled: 1 })
+  expect(errors).toEqual([])
+})
+
 test('winning opens the next difficulty and a starting relic, and the save survives a reload', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))

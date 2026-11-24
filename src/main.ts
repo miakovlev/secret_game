@@ -2,12 +2,12 @@ import Phaser from 'phaser'
 import { Battle, makeFoe, MAX_ARMOR, xpGoal } from './battle'
 import type { BattleEvent, Foe, Phase, Shot } from './battle'
 import {
-  archerVolley, boarCharge, court, bossIds, difficulties, duelRule, foes, warderRule, heroes, heroIds, loadout, relicRule,
+  archerVolley, boarCharge, court, bossIds, difficulties, duelRule, foes, guardRule, warderRule, heroes, heroIds, loadout, relicRule,
 } from './content'
 import type { BossId, HeroId, RelicId, SpellId } from './content'
 import {
   archerTexture, boarTexture, briarlingTexture, duchessTexture, emberTexture, floorTexture,
-  bossTexture, heroTexture, massTexture, retinueTexture, warderTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
+  guardTexture, heroTexture, massTexture, retinueTexture, warderTexture, knightTexture, markedTexture, mothTexture, oilTexture, reliquaryTexture, sealTexture,
 } from './art'
 import { messages, readLanguage, saveLanguage } from './i18n'
 import type { Language } from './i18n'
@@ -156,7 +156,7 @@ class Arena extends Phaser.Scene {
     this.textures.addCanvas('mass', massTexture())
     this.textures.addCanvas('sentinel', warderTexture())
     this.textures.addCanvas('retinue', retinueTexture())
-    this.textures.addCanvas('guard', bossTexture('#8a5a2a', '#ffe08a'))
+    this.textures.addCanvas('guard', guardTexture())
     this.textures.addCanvas('reliquary', reliquaryTexture())
     // The running scene, for browser tests and for poking at it from the console.
     Object.assign(window, { arena: this })
@@ -463,7 +463,7 @@ class Arena extends Phaser.Scene {
               : Math.atan2(b.player.y - foe.y, b.player.x - foe.x),
         )
         .setScale(b.reach(foe) / foes[foe.kind].reach)
-        .setAlpha(foe.mode === 'down' ? 0.35 : 1)
+        .setAlpha(foe.mode === 'down' ? 0.35 : foe.kind === 'guard' && foe !== b.lit ? 0.6 : 1)
       if (rooted) {
         // A health bar under each rooted thing; the seal is tied to the crown.
         const span = foe.kind === 'seal' ? 44 : 96
@@ -488,14 +488,28 @@ class Arena extends Phaser.Scene {
         w.closePath()
         w.fillPath()
       } else if (foe.mode === 'aim' || foe.mode === 'volley') {
-        const progress = foe.mode === 'aim' ? 1 - foe.timer / archerVolley.windup : 1
+        const sentry = foe.kind === 'guard'
+        const windup = sentry ? guardRule.windup : archerVolley.windup
+        const far = sentry ? guardRule.boltReach : archerVolley.arrowReach
+        const progress = foe.mode === 'aim' ? 1 - foe.timer / windup : 1
         w.lineStyle(2 + 2 * progress, 0xffe08a, 0.2 + 0.5 * progress)
-        w.lineBetween(
-          foe.x,
-          foe.y,
-          foe.x + foe.dir.x * archerVolley.arrowReach,
-          foe.y + foe.dir.y * archerVolley.arrowReach,
-        )
+        w.lineBetween(foe.x, foe.y, foe.x + foe.dir.x * far, foe.y + foe.dir.y * far)
+      }
+      if (foe.kind === 'guard') {
+        // The candle: a flame on the one archer that can be hurt, a dark wick on the rest.
+        const burning = foe === b.lit
+        const flicker = 0.5 + 0.5 * Math.sin(b.elapsed * 14 + foe.tier)
+        if (burning) {
+          w.fillStyle(0xffb03c, 0.22)
+          w.fillCircle(foe.x, foe.y, 44 + 4 * flicker)
+          w.fillStyle(0xffe08a, 1)
+          w.fillCircle(foe.x, foe.y - 34, 7 + 2 * flicker)
+          w.fillStyle(0xffffff, 1)
+          w.fillCircle(foe.x, foe.y - 33, 3)
+        } else {
+          w.fillStyle(0x3a3540, 1)
+          w.fillCircle(foe.x, foe.y - 34, 4)
+        }
       }
     })
     const pulse = 0.5 + 0.5 * Math.sin(b.elapsed * 6)
@@ -770,7 +784,9 @@ class Arena extends Phaser.Scene {
     // A pale ring marks the boss among the crowd.
     if (lord && lord.mode !== 'down') {
       g.lineStyle(2, 0xf4f1e6, 0.35 + 0.3 * pulse)
-      for (const foe of b.foes) if (foe.kind === lord.kind) g.strokeCircle(foe.x, foe.y, b.reach(foe) + 10)
+      for (const foe of b.foes) {
+        if (foe.kind === lord.kind && (foe.kind !== 'guard' || foe === b.lit)) g.strokeCircle(foe.x, foe.y, b.reach(foe) + 10)
+      }
     }
     // First-run tips, remembered in the save as soon as each is learned.
     const copy = messages[language]
@@ -794,7 +810,7 @@ class Arena extends Phaser.Scene {
     const trial = b.phase === 'playing' && lord
       ? lord.kind === 'mass' ? copy.massHint
         : lord.kind === 'sentinel' ? copy.warderHint
-          : lord.kind === 'retinue' ? copy.retinueHint : copy.bossHint(copy.bosses[lord.kind as BossId])
+          : lord.kind === 'retinue' ? copy.retinueHint : copy.guardHint
       : ''
     const duel = b.phase === 'playing' && lady ? (b.shielded ? copy.duel.seal : copy.duel.open) : ''
     const tip = lesson ? copy.tips[lesson] : trial || duel
@@ -816,7 +832,8 @@ class Arena extends Phaser.Scene {
           : copy.bossIn(copy.bosses[next!.boss])
     ).toUpperCase() + (
       lord?.kind === 'sentinel' ? ` ${lord.falls + 1}/${warderRule.lives}`
-        : lord?.kind === 'retinue' ? ` ×${b.foes.filter(foe => foe.kind === 'retinue').length}` : ''
+        : lord?.kind === 'retinue' || lord?.kind === 'guard'
+          ? ` ×${b.foes.filter(foe => foe.kind === lord.kind).length}` : ''
     )
     if (clockLabel.textContent !== heading) clockLabel.textContent = heading
     const count = String(b.kills).padStart(2, '0')
